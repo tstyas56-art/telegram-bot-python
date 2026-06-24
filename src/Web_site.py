@@ -51,13 +51,37 @@ def get_flow():
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
         }
-        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+        return Flow.from_client_config(
+            client_config,
+            scopes=SCOPES,
+            redirect_uri=REDIRECT_URI,
+            autogenerate_code_verifier=False,
+        )
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
+        redirect_uri=REDIRECT_URI,
+        autogenerate_code_verifier=False,
     )
     return flow
+
+
+def user_id_from_state(state_value: str) -> str:
+    """Extract Telegram user id from OAuth state.
+
+    /auth/<user_id> stores the Telegram id inside state as tg:<id>.
+    Older links may still return a random Google state, so keep a safe fallback.
+    """
+    if state_value and state_value.startswith('tg:'):
+        return state_value[3:]
+    return session.get('telegram_user_id') or state_value or 'default'
+
+
+def save_credentials_for_user(user_id: str, credentials: Credentials) -> None:
+    """Persist credentials in the format used by drive.py."""
+    token_file = f"token_{user_id}.json"
+    with open(token_file, 'w') as f:
+        f.write(credentials.to_json())
 
 
 @app.route('/')
@@ -71,11 +95,14 @@ def login():
     """Initiate Google OAuth login"""
     try:
         flow = get_flow()
+        state_value = f"web:{os.urandom(16).hex()}"
         authorization_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true'
+            include_granted_scopes='true',
+            prompt='consent',
+            state=state_value
         )
-        session['state'] = state
+        session['state'] = state_value
         return redirect(authorization_url)
     except Exception as e:
         logger.error(f"Login error: {e}")
@@ -93,12 +120,14 @@ def callback():
         flow.fetch_token(authorization_response=authorization_response)
 
         credentials = flow.credentials
-        user_id = request.args.get('state') or session.get('state') or 'default'
+        user_id = user_id_from_state(request.args.get('state'))
 
-        # Store credentials
+        # Store credentials in memory and on disk so bot.get_drive_manager(user_id)
+        # can load token_<telegram_user_id>.json after /login completes.
         user_credentials[user_id] = credentials
+        save_credentials_for_user(user_id, credentials)
 
-        logger.info("OAuth completed. Store GOOGLE_REFRESH_TOKEN in Railway environment for persistence.")
+        logger.info("OAuth completed for user %s; credentials saved to token_%s.json", user_id, user_id)
 
         return render_template('googlesignIn.html',
                                success=True,
@@ -115,12 +144,15 @@ def auth_user(user_id):
     """Get auth URL for specific user"""
     try:
         flow = get_flow()
+        state_value = f"tg:{user_id}"
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
-            state=user_id
+            prompt='consent',
+            state=state_value
         )
-        session['state'] = state
+        session['state'] = state_value
+        session['telegram_user_id'] = user_id
         return jsonify({
             'success': True,
             'auth_url': authorization_url
