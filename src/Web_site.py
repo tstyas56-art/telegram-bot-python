@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -19,14 +20,21 @@ from config import *
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+# Railway and similar platforms run Flask behind a proxy. ProxyFix makes
+# request.url use the original HTTPS scheme sent by the public domain.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your-secret-key-here')
 
 # OAuth configuration
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 CLIENT_SECRETS_FILE = 'client_secrets.json'
 
-# Get redirect URI from environment or use localhost for development
-REDIRECT_URI = os.getenv('REDIRECT_URI', 'http://localhost:8080/callback')
+# Get redirect URI from environment or derive it from the public Railway URL.
+WEB_URL = os.getenv('WEB_URL', '').rstrip('/')
+REDIRECT_URI = os.getenv(
+    'REDIRECT_URI',
+    f"{WEB_URL}/callback" if WEB_URL else 'http://localhost:8080/callback'
+)
 
 # Store user credentials (in production, use a database)
 user_credentials = {}
@@ -79,7 +87,10 @@ def callback():
     """Handle OAuth callback"""
     try:
         flow = get_flow()
-        flow.fetch_token(authorization_response=request.url)
+        authorization_response = request.url
+        if os.getenv('FORCE_HTTPS', 'true').lower() == 'true':
+            authorization_response = authorization_response.replace('http://', 'https://', 1)
+        flow.fetch_token(authorization_response=authorization_response)
 
         credentials = flow.credentials
         user_id = request.args.get('state') or session.get('state') or 'default'
