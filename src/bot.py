@@ -353,7 +353,8 @@ def project_action_keyboard(project_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ تشغيل", callback_data=f"act:start:{project_id}"),
          InlineKeyboardButton("⏹️ إيقاف", callback_data=f"act:stop:{project_id}")],
-        [InlineKeyboardButton("🎯 اختيار ملف التشغيل", callback_data=f"act:choose_entry:{project_id}")],
+        [InlineKeyboardButton("🎯 اختيار ملف التشغيل", callback_data=f"act:choose_entry:{project_id}"),
+         InlineKeyboardButton("⚙️ متغيرات البيئة", callback_data=f"act:env:{project_id}")],
         [InlineKeyboardButton("🔁 إعادة تشغيل", callback_data=f"act:restart:{project_id}")],
         [InlineKeyboardButton("ℹ️ معلومات", callback_data=f"act:info:{project_id}"),
          InlineKeyboardButton("📜 السجلات", callback_data=f"act:logs:{project_id}")],
@@ -770,6 +771,25 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             elif action == "logs":
                 text = bot.log_store.tail(project_id, 100)
                 await query.edit_message_text(f"```\n{text[-3500:]}\n```", reply_markup=project_action_keyboard(project_id))
+            elif action == "env":
+                project = bot.registry.get(project_id)
+                if not project:
+                    await query.edit_message_text(t("project_not_found"))
+                    return
+                env_vars = project.environment_vars or {}
+                rows = []
+                for key, value in sorted(env_vars.items()):
+                    rows.append([InlineKeyboardButton(f"❌ {key}", callback_data=f"act:envdel:{project_id}:{key}")])
+                rows.append([InlineKeyboardButton("➕ إضافة متغير", callback_data=f"act:envadd:{project_id}")])
+                rows.append([InlineKeyboardButton("↩️ العودة", callback_data=f"act:info:{project_id}")])
+                reply_markup = InlineKeyboardMarkup(rows)
+                var_list = "\n".join(f"{k}: `{v}`" for k, v in sorted(env_vars.items()))
+                await query.edit_message_text(
+                    f"**متغيرات بيئة المشروع {project.project_name}:**\n\n" +
+                    (var_list if var_list else "لا توجد متغيرات بعد."),
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup,
+                )
             elif action == "delete":
                 await bot.project_manager.stop_project(project_id, manager)
                 project = bot.registry.delete(project_id, manager)
