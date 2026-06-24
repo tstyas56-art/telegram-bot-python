@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WOWDrive Bot - Upload files from Telegram to Google Drive
+ZEUS Uptime Bot - Upload files from Telegram to Google Drive
 هيكلة جديدة: واجهة قائمة بالأزرار (Inline Keyboards) بدل الأوامر النصية اليدوية،
 مع الحفاظ الكامل على منطق العمل (Drive / ProjectManager / Registry) كما هو.
 """
@@ -67,7 +67,7 @@ class UploadTask:
 # Core bot object — unchanged business logic, only the surface area differs
 # ──────────────────────────────────────────────────────────────────────────
 
-class WOWDriveBot:
+class ZEUSUptimeBot:
     def __init__(self):
         self.upload_queue: List[UploadTask] = []
         self.active_uploads: Dict[int, UploadTask] = {}
@@ -232,7 +232,7 @@ class WOWDriveBot:
         return project
 
 
-bot = WOWDriveBot()
+bot = ZEUSUptimeBot()
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -258,25 +258,25 @@ async def require_owner(update: Update) -> bool:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Menu builders
+# Menu builders (with enhanced colors & aesthetics)
 # ──────────────────────────────────────────────────────────────────────────
 
 def main_menu_keyboard(owner: bool) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton("☁️ Google Drive", callback_data="menu:drive")],
+        [InlineKeyboardButton("🔵 ☁️ Google Drive", callback_data="menu:drive")],
     ]
     if owner:
-        rows.append([InlineKeyboardButton("📦 المشاريع المستضافة", callback_data="menu:projects:0")])
-        rows.append([InlineKeyboardButton("🛰️ لوحة التحكم بالنظام", callback_data="menu:system")])
-    rows.append([InlineKeyboardButton("🔒 الخصوصية", callback_data="menu:privacy")])
+        rows.append([InlineKeyboardButton("🟢 📦 المشاريع المستضافة", callback_data="menu:projects:0")])
+        rows.append([InlineKeyboardButton("🟠 🛰️ لوحة التحكم بالنظام", callback_data="menu:system")])
+    rows.append([InlineKeyboardButton("⚪ 🔒 الخصوصية", callback_data="menu:privacy")])
     return InlineKeyboardMarkup(rows)
 
 
 def drive_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔑 تسجيل الدخول", callback_data="act:login:_")],
+        [InlineKeyboardButton("🔐 تسجيل الدخول", callback_data="act:login:_")],
         [InlineKeyboardButton("📊 المساحة المتاحة", callback_data="act:stat:_")],
-        [InlineKeyboardButton("🗂️ آخر الملفات", callback_data="act:list:_")],
+        [InlineKeyboardButton("📁 آخر الملفات", callback_data="act:list:_")],
         [InlineKeyboardButton("⬆️ كيف أرفع ملفًا؟", callback_data="act:upload_help:_")],
         [InlineKeyboardButton("⬅️ رجوع", callback_data="menu:main")],
     ])
@@ -302,9 +302,8 @@ def projects_list_keyboard(page: int) -> InlineKeyboardMarkup:
     chunk = projects[start:start + PROJECTS_PER_PAGE]
 
     rows = []
-    status_icon = {"running": "🟢", "stopped": "⚪️", "error": "🔴"}
     for p in chunk:
-        icon = status_icon.get(getattr(p, "status", ""), "⚪️")
+        icon = "🟢" if getattr(p, "status", "") == "running" else ("🔴" if getattr(p, "status", "") == "error" else "⚪")
         rows.append([InlineKeyboardButton(
             f"{icon} {p.project_name} ({p.project_type})",
             callback_data=f"proj:{p.project_id}"
@@ -349,8 +348,14 @@ def confirm_keyboard(action: str, project_id: str) -> InlineKeyboardMarkup:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     owner = is_owner(update)
+    welcome_text = (
+        "⚡ *ZEUS Uptime* ⚡\n\n"
+        "مرحباً بك! أنا بوت متكامل لرفع الملفات إلى Google Drive وإدارة المشاريع المستضافة.\n"
+        "استخدم الأزرار الملونة أدناه للتنقل بسهولة بين الخدمات. 🚀"
+    )
     await update.message.reply_text(
-        t("start_help") + "\n\nاستخدم الأزرار أدناه للتنقل 👇",
+        welcome_text,
+        parse_mode='Markdown',
         reply_markup=main_menu_keyboard(owner),
     )
 
@@ -696,5 +701,9 @@ def start_bot():
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_error_handler(error_handler)
 
-    logger.info("بدء تشغيل WOWDrive Bot...")
+    logger.info("بدء تشغيل ZEUS Uptime Bot...")
     application.run_polling()
+
+
+if __name__ == "__main__":
+    start_bot()
