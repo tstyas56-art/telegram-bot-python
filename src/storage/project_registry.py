@@ -76,13 +76,16 @@ class ProjectRegistry:
             logger.exception("Failed to back up project registry to Drive: %s", exc)
             return False
 
-    def restore_from_drive(self, drive_manager) -> bool:
-        try:
-            file_id = self.drive_file_id or drive_manager.find_file_by_name(self.drive_file_name)
-            if not file_id:
-                return False
-            self.drive_file_id = file_id
-            return drive_manager.download_file(file_id, str(self.path))
-        except Exception as exc:
-            logger.exception("Failed to restore project registry from Drive: %s", exc)
-            return False
+    def update_env_vars(self, project_id: str, env_vars: Dict[str, str], drive_manager=None) -> Optional[ProjectRecord]:
+        """Update environment variables for a project."""
+        raw = self._load_raw()
+        if project_id not in raw.setdefault("projects", {}):
+            return None
+        project = ProjectRecord.from_dict(raw["projects"][project_id])
+        project.environment_vars = env_vars
+        raw["projects"][project_id] = project.to_dict()
+        raw["drive_file_id"] = self.drive_file_id
+        self.store.write(raw)
+        if drive_manager and drive_manager.service:
+            self.backup_to_drive(drive_manager)
+        return project
