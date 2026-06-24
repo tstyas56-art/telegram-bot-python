@@ -28,24 +28,62 @@ def _find_first(root: Path, names: List[str]) -> Optional[str]:
 
 
 def discover_project(root_dir: str) -> Dict[str, Optional[str]]:
-    """Detect a Python project type and suggested startup command."""
+    """Detect project type and suggested startup command."""
     root = Path(root_dir)
     has = {path.name for path in root.rglob("*") if path.is_file()}
 
-    entry = _find_first(root, ["bot.py", "main.py", "app.py", "run.py"])
+    entry = None
     project_type = "generic_python"
-    if "Dockerfile" in has:
-        project_type = "docker_ready"
-    elif "bot.py" in has:
-        project_type = "telegram_or_discord_bot"
-    elif "app.py" in has:
-        project_type = "flask_or_fastapi"
-    elif "main.py" in has:
-        project_type = "python_application"
-    elif "requirements.txt" in has:
-        project_type = "python_project"
+    startup_command = None
 
-    startup_command = ["python", entry] if entry else None
+    # Python detection (same as before)
+    python_entry = _find_first(root, ["bot.py", "main.py", "app.py", "run.py"])
+    if python_entry:
+        entry = python_entry
+        if "Dockerfile" in has:
+            project_type = "docker_ready"
+        elif "bot.py" in has:
+            project_type = "telegram_or_discord_bot"
+        elif "app.py" in has:
+            project_type = "flask_or_fastapi"
+        elif "main.py" in has:
+            project_type = "python_application"
+        elif "requirements.txt" in has:
+            project_type = "python_project"
+        else:
+            project_type = "generic_python"
+        startup_command = ["python", entry]
+
+    # Node/JavaScript detection
+    elif "package.json" in has:
+        project_type = "nodejs"
+        # Look for common entry points
+        node_entry = _find_first(root, ["index.js", "server.js", "app.js", "main.js"])
+        entry = node_entry
+        if entry:
+            startup_command = ["node", entry]
+        else:
+            startup_command = ["npm", "start"]
+
+    # Generic JavaScript (no package.json)
+    elif "index.js" in has or "server.js" in has:
+        project_type = "javascript"
+        entry = _find_first(root, ["index.js", "server.js", "app.js", "main.js"])
+        if entry:
+            startup_command = ["node", entry]
+
+    # Generic script detection (shell)
+    elif "start.sh" in has or "run.sh" in has:
+        project_type = "shell_script"
+        entry = _find_first(root, ["start.sh", "run.sh"])
+        startup_command = ["sh", entry] if entry else None
+
+    # Fallback: treat as unknown but keep it in registry
+    else:
+        project_type = "unknown"
+        entry = None
+        startup_command = None
+
     return {
         "project_type": project_type,
         "main_entry_file": entry,
