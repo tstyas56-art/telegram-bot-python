@@ -319,7 +319,7 @@ bot = WOWDriveBot()
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
-    await update.message.reply_text(t("start_help"), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("start_help"))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -332,7 +332,7 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     auth_url = await bot.get_auth_url(user_id)
     if auth_url:
-        await update.message.reply_text(t("login_message", auth_url=auth_url), parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(t("login_message", auth_url=auth_url))
     else:
         await update.message.reply_text(t("login_failed"))
 
@@ -348,7 +348,7 @@ async def stat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     used = int(storage_info.get('usage', 0))
     free = total - used
     usage_percent = (used / total * 100) if total > 0 else 0
-    await update.message.reply_text(t("storage_info", total=total/(1024**3), used=used/(1024**3), free=free/(1024**3), percent=usage_percent), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("storage_info", total=total/(1024**3), used=used/(1024**3), free=free/(1024**3), percent=usage_percent))
 
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,10 +363,10 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         size = int(file.get('size', 0))
         size_mb = size / (1024**2) if size > 0 else 0
         created = file.get('createdTime', 'غير معروف')
-        message += f"{i}. **{file['name']}**\n"
-        message += f"   📏 {size_mb:.1f} MB | 🆔 `{file['id']}`\n"
+        message += f"{i}. {file['name']}\n"
+        message += f"   📏 {size_mb:.1f} MB | 🆔 {file['id']}\n"
         message += f"   📅 {created[:10]}\n\n"
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(message)
 
 
 async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -403,7 +403,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /privacy command."""
-    await update.message.reply_text(t("privacy"), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("privacy"))
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -423,7 +423,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_size=document.file_size,
         message_id=update.message.message_id
     )
-    await update.message.reply_text(t("download_started", file_name=task.file_name), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("download_started", file_name=task.file_name))
     file_path = await bot.download_telegram_file(task, context)
     if not file_path:
         await update.message.reply_text(t("download_failed"))
@@ -432,8 +432,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if task.file_name.lower().endswith(".zip") and is_owner(update):
             project = await bot.register_project_archive(user_id, file_path, task.file_name)
             await update.message.reply_text(
-                t("project_registered", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file),
-                parse_mode=ParseMode.MARKDOWN,
+                t("project_registered", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file)
             )
         else:
             success = await (bot.upload_file_chunked(task, file_path) if task.file_size > 20 * 1024 * 1024 else bot.upload_file_direct(task, file_path))
@@ -472,7 +471,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send initial message
     message = t("queued", file_name=task.file_name)
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(message)
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -501,7 +500,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send initial message
     message = t("queued", file_name=task.file_name)
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(message)
 
 
 def is_owner(update: Update) -> bool:
@@ -529,8 +528,8 @@ async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = [t("projects_header")]
     for project in projects:
-        lines.append(f"• `{project.project_id}` — **{project.project_name}** ({project.project_type}) — {project.status}")
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+        lines.append(f"• {project.project_id} — {project.project_name} ({project.project_type}) — {project.status}")
+    await update.message.reply_text("\n".join(lines))
 
 
 def _project_id_from_args(context):
@@ -598,8 +597,7 @@ async def project_info_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(t("info_usage"))
         return
     await update.message.reply_text(
-        t("project_info", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file, status=project.status, auto_restart=project.auto_restart, drive_file_id=project.drive_file_id),
-        parse_mode=ParseMode.MARKDOWN,
+        t("project_info", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file, status=project.status, auto_restart=project.auto_restart, drive_file_id=project.drive_file_id)
     )
 
 
@@ -612,14 +610,14 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = int(context.args[1]) if len(context.args) > 1 and context.args[1] in {"50", "100", "500"} else 100
     text = bot.log_store.tail(project_id, lines)
-    await update.message.reply_text(f"```\n{text[-3500:]}\n```", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(f"```\n{text[-3500:]}\n```")
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.status_lines()
-    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))))
 
 
 async def storage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -637,21 +635,21 @@ async def running_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.running_lines()
-    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))))
 
 
 async def resources_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.resource_lines()
-    await update.message.reply_text(t("resources_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("resources_header", lines=("\n".join(lines) if lines else t("no_running"))))
 
 
 async def uptime_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.uptime_lines()
-    await update.message.reply_text(t("uptime_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("uptime_header", lines=("\n".join(lines) if lines else t("no_running"))))
 
 
 async def stop_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -689,7 +687,7 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.health_lines(bot.get_drive_manager(update.effective_user.id))
-    await update.message.reply_text(t("health_header", lines="\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("health_header", lines="\n".join(lines)))
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
