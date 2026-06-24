@@ -80,12 +80,20 @@ class WOWDriveBot:
         except Exception as exc:
             logger.error("فشل إرسال إشعار للمالك: %s", exc)
     def get_drive_manager(self, user_id: int) -> GoogleDriveManager:
-        """Get or create Drive manager for user"""
-        if user_id not in self.user_drive_managers:
+        """Get or create Drive manager for user.
+
+        If the manager was created before the user completed /login, it may be
+        cached without a Drive service. Try loading credentials again on every
+        access until the service becomes available.
+        """
+        user_key = str(user_id)
+        manager = self.user_drive_managers.get(user_id)
+        if manager is None:
             manager = GoogleDriveManager()
-            manager.load_credentials_from_file(str(user_id))
             self.user_drive_managers[user_id] = manager
-        return self.user_drive_managers[user_id]
+        if manager.service is None:
+            manager.load_credentials_from_file(user_key)
+        return manager
 
     async def get_auth_url(self, user_id: int) -> Optional[str]:
         """Get authentication URL for user"""
