@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from bot import start_bot
-from site import start_web_server
+from Web_site import start_web_server
 from config import *
 
 # Configure logging
