@@ -1,178 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>WOWDrive Bot - Upload to Google Drive</title>
+		<title>WOWDrive Bot - رفع الملفات إلى Google Drive</title>
 		<style>
-			* {
-				margin: 0;
-				padding: 0;
-				box-sizing: border-box;
-			}
-
+			* { margin: 0; padding: 0; box-sizing: border-box; }
 			body {
-				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
 				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-				min-height: 100vh;
-				display: flex;
-				align-items: center;
-				justify-content: center;
+				min-height: 100vh; display: flex; align-items: center; justify-content: center;
+				direction: rtl; padding: 20px;
 			}
-
-			.container {
-				background: white;
-				border-radius: 20px;
-				box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-				padding: 40px;
-				max-width: 500px;
-				width: 90%;
-				text-align: center;
-			}
-
-			.logo {
-				font-size: 3rem;
-				margin-bottom: 20px;
-			}
-
-			h1 {
-				color: #333;
-				margin-bottom: 10px;
-				font-size: 2.5rem;
-			}
-
-			.subtitle {
-				color: #666;
-				margin-bottom: 30px;
-				font-size: 1.1rem;
-			}
-
-			.features {
-				text-align: left;
-				margin: 30px 0;
-			}
-
-			.feature {
-				display: flex;
-				align-items: center;
-				margin: 15px 0;
-				padding: 10px;
-				background: #f8f9fa;
-				border-radius: 10px;
-			}
-
-			.feature-icon {
-				font-size: 1.5rem;
-				margin-right: 15px;
-			}
-
-			.btn {
-				display: inline-block;
-				background: linear-gradient(45deg, #667eea, #764ba2);
-				color: white;
-				padding: 15px 30px;
-				text-decoration: none;
-				border-radius: 50px;
-				font-weight: bold;
-				margin: 10px;
-				transition: transform 0.3s ease;
-			}
-
-			.btn:hover {
-				transform: translateY(-2px);
-			}
-
-			.btn-secondary {
-				background: linear-gradient(45deg, #28a745, #20c997);
-			}
-
-			.stats {
-				display: flex;
-				justify-content: space-around;
-				margin: 30px 0;
-				padding: 20px;
-				background: #f8f9fa;
-				border-radius: 15px;
-			}
-
-			.stat {
-				text-align: center;
-			}
-
-			.stat-number {
-				font-size: 2rem;
-				font-weight: bold;
-				color: #667eea;
-			}
-
-			.stat-label {
-				color: #666;
-				font-size: 0.9rem;
-			}
-
-			.footer {
-				margin-top: 30px;
-				padding-top: 20px;
-				border-top: 1px solid #eee;
-				color: #666;
-				font-size: 0.9rem;
-			}
-
-			.footer a {
-				color: #667eea;
-				text-decoration: none;
-			}
+			.container { background: white; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,.1); padding: 40px; max-width: 500px; width: 90%; text-align: center; }
+			.logo { font-size: 3rem; margin-bottom: 20px; }
+			h1 { color: #333; margin-bottom: 10px; font-size: 2.5rem; }
+			.subtitle { color: #666; margin-bottom: 30px; font-size: 1.1rem; }
+			.features { text-align: right; margin: 30px 0; }
+			.feature { display: flex; align-items: center; gap: 15px; margin: 15px 0; padding: 12px; background: #f8f9fa; border-radius: 10px; }
+			.feature-icon { font-size: 1.5rem; }
+			.btn { display: inline-block; background: linear-gradient(45deg,#667eea,#764ba2); color: white; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; margin: 10px; transition: transform .3s ease; }
+			.btn:hover { transform: translateY(-2px); }
+			.btn-secondary { background: linear-gradient(45deg,#28a745,#20c997); }
+			.stats { display: flex; justify-content: space-around; gap: 10px; margin: 30px 0; padding: 20px; background: #f8f9fa; border-radius: 15px; }
+			.stat { text-align: center; }
+			.stat-number { font-size: 2rem; font-weight: bold; color: #667eea; }
+			.stat-label { color: #666; font-size: .9rem; }
+			.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: .9rem; }
+			.footer a { color: #667eea; text-decoration: none; }
+			@media (max-width: 520px) { .container{padding:25px;} h1{font-size:2rem;} .stats{flex-direction:column;} }
 		</style>
 	</head>
 	<body>
 		<div class="container">
 			<div class="logo">🤖</div>
 			<h1>WOWDrive Bot</h1>
-			<p class="subtitle">Upload files from Telegram to Google Drive</p>
+			<p class="subtitle">ارفع ملفاتك من تيليجرام مباشرة إلى Google Drive</p>
 
 			<div class="features">
-				<div class="feature">
-					<span class="feature-icon">📤</span>
-					<span>Upload any file from Telegram</span>
-				</div>
-				<div class="feature">
-					<span class="feature-icon">🔄</span>
-					<span>Chunked upload for large files</span>
-				</div>
-				<div class="feature">
-					<span class="feature-icon">📊</span>
-					<span>Real-time progress tracking</span>
-				</div>
-				<div class="feature">
-					<span class="feature-icon">🔐</span>
-					<span>Secure Google Drive integration</span>
-				</div>
+				<div class="feature"><span class="feature-icon">📤</span><span>رفع أي ملف من تيليجرام</span></div>
+				<div class="feature"><span class="feature-icon">🔄</span><span>رفع مجزأ للملفات الكبيرة</span></div>
+				<div class="feature"><span class="feature-icon">📊</span><span>متابعة حالة الرفع لحظة بلحظة</span></div>
+				<div class="feature"><span class="feature-icon">🔐</span><span>ربط آمن مع Google Drive</span></div>
 			</div>
 
 			<div class="stats">
-				<div class="stat">
-					<div class="stat-number">2GB</div>
-					<div class="stat-label">Max File Size</div>
-				</div>
-				<div class="stat">
-					<div class="stat-number">∞</div>
-					<div class="stat-label">Files Supported</div>
-				</div>
-				<div class="stat">
-					<div class="stat-number">⚡</div>
-					<div class="stat-label">Fast Upload</div>
-				</div>
+				<div class="stat"><div class="stat-number">2GB</div><div class="stat-label">أقصى حجم للملف</div></div>
+				<div class="stat"><div class="stat-number">∞</div><div class="stat-label">دعم لكل الملفات</div></div>
+				<div class="stat"><div class="stat-number">⚡</div><div class="stat-label">رفع سريع</div></div>
 			</div>
 
-			<a href="/login" class="btn">🔐 Connect Google Drive</a>
-			<a href="https://t.me/your_bot_username" class="btn btn-secondary">🤖 Start Bot</a>
+			<a href="/login" class="btn">🔐 ربط Google Drive</a>
+			<a href="https://t.me/your_bot_username" class="btn btn-secondary">🤖 فتح البوت</a>
 
 			<div class="footer">
-				<p>
-					<a href="/policy">Privacy Policy</a> |
-					<a href="/terms">Terms of Service</a>
-				</p>
-				<p>Made with ❤️ for seamless file management</p>
+				<p><a href="/policy">سياسة الخصوصية</a> | <a href="/terms">شروط الخدمة</a></p>
+				<p>صُنع لتسهيل إدارة الملفات بأمان</p>
 			</div>
 		</div>
 	</body>
