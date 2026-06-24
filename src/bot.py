@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 PROJECTS_PER_PAGE = 6
 DESTRUCTIVE_ACTIONS = {"stop_all", "restart_all", "delete", "delete_drive"}
+ENTRY_CANDIDATES: Dict[str, List[str]] = {}
 
 
 @dataclass
@@ -198,15 +199,41 @@ class ZEUSUptimeBot:
         detected = discover_project(extract_dir)
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-        base_name = Path(file_name).stem
+        return self._save_project_record(user_id, file_path, file_name, detected)
+
+    async def register_python_file_project(self, user_id: int, file_path: str, file_name: str) -> ProjectRecord:
+        """Package one .py file as a runnable project and register it."""
+        manager = self.get_drive_manager(user_id)
+        if not manager.service:
+            raise ValueError(t("auth_required"))
+        safe_name = Path(file_name).name
+        if not safe_name.lower().endswith(".py"):
+            raise ValueError("يجب أن يكون الملف بصيغة .py")
+        archive_path = os.path.join(tempfile.gettempdir(), f"single_py_{uuid.uuid4().hex}.zip")
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.write(file_path, safe_name)
+        try:
+            detected = {
+                "project_type": "single_python_file",
+                "main_entry_file": safe_name,
+                "startup_command": ["python", safe_name],
+            }
+            return self._save_project_record(user_id, archive_path, f"{Path(safe_name).stem}.zip", detected)
+        finally:
+            if os.path.exists(archive_path):
+                os.remove(archive_path)
+
+    def _save_project_record(self, user_id: int, archive_path: str, archive_name: str, detected: Dict) -> ProjectRecord:
+        manager = self.get_drive_manager(user_id)
+        base_name = Path(archive_name).stem
         existing = self.registry.find_by_name(base_name)
-        drive_file_id = manager.upload_file_chunked(file_path, file_name)
+        drive_file_id = manager.upload_file_chunked(archive_path, archive_name)
         if not drive_file_id:
             raise RuntimeError("فشل الرفع إلى Google Drive")
 
         if existing:
             version = len(existing.versions) + 1
-            existing.versions.append(ProjectVersion(version, existing.drive_file_id, utc_now_iso(), file_name))
+            existing.versions.append(ProjectVersion(version, existing.drive_file_id, utc_now_iso(), archive_name))
             while len(existing.versions) > MAX_PROJECT_VERSIONS:
                 old_version = existing.versions.pop(0)
                 manager.delete_file(old_version.drive_file_id)
@@ -317,7 +344,7 @@ def projects_list_keyboard(page: int) -> InlineKeyboardMarkup:
     if nav:
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton("⬆️ رفع مشروع جديد (ZIP)", callback_data="act:upload_help:_")])
+    rows.append([InlineKeyboardButton("⬆️ رفع مشروع جديد (ZIP أو PY)", callback_data="act:upload_help:_")])
     rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="menu:main")])
     return InlineKeyboardMarkup(rows)
 
@@ -326,6 +353,7 @@ def project_action_keyboard(project_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ تشغيل", callback_data=f"act:start:{project_id}"),
          InlineKeyboardButton("⏹️ إيقاف", callback_data=f"act:stop:{project_id}")],
+        [InlineKeyboardButton("🎯 اختيار ملف التشغيل", callback_data=f"act:choose_entry:{project_id}")],
         [InlineKeyboardButton("🔁 إعادة تشغيل", callback_data=f"act:restart:{project_id}")],
         [InlineKeyboardButton("ℹ️ معلومات", callback_data=f"act:info:{project_id}"),
          InlineKeyboardButton("📜 السجلات", callback_data=f"act:logs:{project_id}")],
@@ -333,6 +361,53 @@ def project_action_keyboard(project_id: str) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🗑️☁️ حذف + من Drive", callback_data=f"conf:delete_drive:{project_id}")],
         [InlineKeyboardButton("⬅️ كل المشاريع", callback_data="menu:projects:0")],
     ])
+
+
+def python_entry_candidates(project_dir: Path) -> List[str]:
+    """Return likely Python entry files inside an extracted project."""
+    ignored_dirs = {".git", "__pycache__", "venv", ".venv", "env", "node_modules", "site-packages"}
+    candidates = []
+    preferred = {"main.py": 0, "bot.py": 1, "app.py": 2, "run.py": 3, "server.py": 4, "index.py": 5}
+    for path in project_dir.rglob("*.py"):
+        rel = path.relative_to(project_dir)
+        if any(part in ignored_dirs for part in rel.parts):
+            continue
+        candidates.append(str(rel).replace(os.sep, "/"))
+    candidates.sort(key=lambda x: (preferred.get(Path(x).name, 50), len(Path(x).parts), x.lower()))
+    return candidates[:40]
+
+
+def entry_selection_keyboard(project_id: str, entries: List[str]) -> InlineKeyboardMarkup:
+    rows = []
+    for idx, entry in enumerate(entries[:30]):
+        label = entry if len(entry) <= 45 else "…" + entry[-44:]
+        rows.append([InlineKeyboardButton(f"🐍 {label}", callback_data=f"entry:{project_id}:{idx}")])
+    rows.append([InlineKeyboardButton("⬅️ رجوع للمشروع", callback_data=f"proj:{project_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_entry_selector(query, project_id: str, manager, message_prefix: str = "") -> None:
+    project = bot.registry.get(project_id)
+    if not project:
+        await query.edit_message_text(t("project_not_found"))
+        return
+    try:
+        project_dir = await bot.project_manager.ensure_project_files(project, manager)
+        entries = python_entry_candidates(project_dir)
+    except Exception as exc:
+        logger.exception("Failed to prepare entry selector")
+        await query.edit_message_text(t("operation_failed", error=exc), reply_markup=project_action_keyboard(project_id))
+        return
+    if not entries:
+        await query.edit_message_text(
+            "❌ لم أجد أي ملفات Python داخل هذا المشروع. ارفع ملف .py منفرد أو ZIP يحتوي على ملفات .py.",
+            reply_markup=project_action_keyboard(project_id),
+        )
+        return
+    context = getattr(query, "_entry_candidates", None)
+    ENTRY_CANDIDATES[project_id] = entries
+    text = (message_prefix + "\n\n" if message_prefix else "") + "🎯 اختر ملف التشغيل من القائمة التالية:"
+    await query.edit_message_text(text, reply_markup=entry_selection_keyboard(project_id, entries))
 
 
 def confirm_keyboard(action: str, project_id: str) -> InlineKeyboardMarkup:
@@ -396,14 +471,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(t("download_failed"))
         return
     try:
-        if task.file_name.lower().endswith(".zip") and is_owner(update):
-            project = await bot.register_project_archive(user_id, file_path, task.file_name)
+        lower_name = task.file_name.lower()
+        if is_owner(update) and (lower_name.endswith(".zip") or lower_name.endswith(".py")):
+            if lower_name.endswith(".zip"):
+                project = await bot.register_project_archive(user_id, file_path, task.file_name)
+            else:
+                project = await bot.register_python_file_project(user_id, file_path, task.file_name)
+            entry_text = project.main_entry_file or "غير مكتشف — استخدم زر اختيار ملف التشغيل"
             await status_msg.edit_text(
                 t("project_registered", name=project.project_name, id=project.project_id,
-                  type=project.project_type, entry=project.main_entry_file),
+                  type=project.project_type, entry=entry_text),
                 reply_markup=project_action_keyboard(project.project_id),
             )
         else:
+            if is_owner(update):
+                await status_msg.edit_text("❌ يدعم رفع المشاريع فقط بصيغة ZIP أو ملف Python منفرد .py")
+                return
             success = await (bot.upload_file_chunked(task, file_path)
                               if task.file_size > 20 * 1024 * 1024
                               else bot.upload_file_direct(task, file_path))
@@ -522,6 +605,31 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return
 
+        # ---------- choose a Python entry file interactively ----------
+        if kind == "entry":
+            if not await require_owner_cb(query):
+                return
+            project_id = parts[1]
+            idx = int(parts[2]) if len(parts) > 2 else -1
+            entries = ENTRY_CANDIDATES.get(project_id, [])
+            if idx < 0 or idx >= len(entries):
+                await show_entry_selector(query, project_id, manager, "⚠️ انتهت صلاحية قائمة الملفات، اختر مرة أخرى.")
+                return
+            entry_file = entries[idx]
+            project = bot.registry.get(project_id)
+            if not project:
+                await query.edit_message_text(t("project_not_found"))
+                return
+            project.main_entry_file = entry_file
+            project.startup_command = ["python", entry_file]
+            bot.registry.save(project, manager)
+            await query.edit_message_text(
+                f"✅ تم تعيين ملف التشغيل:\n`{entry_file}`\n\nيمكنك الآن تشغيل المشروع.",
+                parse_mode='Markdown',
+                reply_markup=project_action_keyboard(project_id),
+            )
+            return
+
         # ---------- confirmation gate for destructive actions ----------
         if kind == "conf":
             if not await require_owner_cb(query):
@@ -616,15 +724,38 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 count = await bot.project_manager.restart_all(manager)
                 await query.edit_message_text(t("all_restarted", count=count), reply_markup=system_menu_keyboard())
 
+            elif action == "choose_entry":
+                await show_entry_selector(query, project_id, manager)
+
             elif action == "start":
-                result = await bot.project_manager.start_project(project_id, manager, auto_restart=True)
-                await query.edit_message_text(t("project_started", result=result), reply_markup=project_action_keyboard(project_id))
+                project = bot.registry.get(project_id)
+                if project and not project.startup_command:
+                    await show_entry_selector(query, project_id, manager, "⚠️ لم أستطع اكتشاف ملف التشغيل تلقائيًا.")
+                    return
+                try:
+                    result = await bot.project_manager.start_project(project_id, manager, auto_restart=True)
+                    await query.edit_message_text(t("project_started", result=result), reply_markup=project_action_keyboard(project_id))
+                except Exception as exc:
+                    if "لا يوجد أمر تشغيل" in str(exc) or "startup" in str(exc).lower():
+                        await show_entry_selector(query, project_id, manager, "⚠️ لم أستطع اكتشاف ملف التشغيل تلقائيًا.")
+                        return
+                    raise
             elif action == "stop":
                 result = await bot.project_manager.stop_project(project_id, manager)
                 await query.edit_message_text(t("project_started", result=result), reply_markup=project_action_keyboard(project_id))
             elif action == "restart":
-                result = await bot.project_manager.restart_project(project_id, manager)
-                await query.edit_message_text(t("project_started", result=result), reply_markup=project_action_keyboard(project_id))
+                project = bot.registry.get(project_id)
+                if project and not project.startup_command:
+                    await show_entry_selector(query, project_id, manager, "⚠️ لم أستطع اكتشاف ملف التشغيل تلقائيًا.")
+                    return
+                try:
+                    result = await bot.project_manager.restart_project(project_id, manager)
+                    await query.edit_message_text(t("project_started", result=result), reply_markup=project_action_keyboard(project_id))
+                except Exception as exc:
+                    if "لا يوجد أمر تشغيل" in str(exc) or "startup" in str(exc).lower():
+                        await show_entry_selector(query, project_id, manager, "⚠️ لم أستطع اكتشاف ملف التشغيل تلقائيًا.")
+                        return
+                    raise
             elif action == "info":
                 project = bot.registry.get(project_id)
                 if not project:
