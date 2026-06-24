@@ -33,7 +33,17 @@ user_credentials = {}
 
 
 def get_flow():
-    """Get OAuth flow configuration"""
+    """Get OAuth flow configuration from environment when available."""
+    if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+        client_config = {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
@@ -77,10 +87,7 @@ def callback():
         # Store credentials
         user_credentials[user_id] = credentials
 
-        # Save to file for persistence
-        token_file = f"token_{user_id}.json"
-        with open(token_file, 'w') as f:
-            f.write(credentials.to_json())
+        logger.info("OAuth completed. Store GOOGLE_REFRESH_TOKEN in Railway environment for persistence.")
 
         return render_template('googlesignIn.html',
                                success=True,

@@ -65,10 +65,20 @@ class WOWDriveBot:
         self.registry = ProjectRegistry(PROJECT_REGISTRY_FILE, PROJECT_REGISTRY_DRIVE_NAME)
         self.runtime_store = RuntimeStateStore(RUNTIME_STATE_FILE, RUNTIME_STATE_DRIVE_NAME)
         self.log_store = ProjectLogStore(PROJECT_LOG_DIR)
+        self.application = None
         self.project_manager = ProjectManager(
-            self.registry, self.runtime_store, PROJECT_WORKSPACE, self.log_store
+            self.registry, self.runtime_store, PROJECT_WORKSPACE, self.log_store, self.notify_owner
         )
 
+
+    async def notify_owner(self, message: str) -> None:
+        """Send automatic operational alerts to the owner chat when configured."""
+        if not OWNER_CHAT_ID or not self.application:
+            return
+        try:
+            await self.application.bot.send_message(chat_id=OWNER_CHAT_ID, text=message)
+        except Exception as exc:
+            logger.error("فشل إرسال إشعار للمالك: %s", exc)
     def get_drive_manager(self, user_id: int) -> GoogleDriveManager:
         """Get or create Drive manager for user"""
         if user_id not in self.user_drive_managers:
@@ -276,6 +286,10 @@ class WOWDriveBot:
         if existing:
             version = len(existing.versions) + 1
             existing.versions.append(ProjectVersion(version, existing.drive_file_id, utc_now_iso(), file_name))
+            while len(existing.versions) > MAX_PROJECT_VERSIONS:
+                old_version = existing.versions.pop(0)
+                manager.delete_file(old_version.drive_file_id)
+                logger.info("تم حذف إصدار قديم من المشروع %s من Google Drive: %s", existing.project_name, old_version.drive_file_id)
             existing.drive_file_id = drive_file_id
             existing.upload_date = utc_now_iso()
             existing.project_type = detected["project_type"] or "unknown"
@@ -667,6 +681,7 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     bot.registry.backup_to_drive(manager)
     bot.runtime_store.save(bot.project_manager.running_state, manager)
+    bot.log_store.archive_all([project.project_id for project in bot.registry.list_projects()], manager)
     await update.message.reply_text(t("backup_done"))
 
 
@@ -702,12 +717,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init_recovery(application: Application):
     """Automatically restore desired running projects after Railway restarts."""
+    bot.application = application
     if not OWNER_USER_ID:
         logger.info("لم يتم ضبط OWNER_USER_ID؛ سيتم تخطي الاستعادة التلقائية")
         return
     manager = bot.get_drive_manager(int(OWNER_USER_ID))
     if not manager.service:
         logger.warning("بيانات اعتماد Google Drive للمالك غير متاحة؛ تم تخطي الاستعادة التلقائية")
+        await bot.notify_owner("❌ Google Drive غير متصل؛ تم تخطي الاستعادة التلقائية.")
         return
     recovered = await bot.project_manager.recover(manager)
     logger.info("الاستعادة التلقائية شغّلت %s مشروع/مشاريع", recovered)

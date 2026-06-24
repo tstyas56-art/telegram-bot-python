@@ -6,13 +6,13 @@ Google Drive operations
 import os
 import json
 import logging
-import io
 from typing import Optional, Dict, List
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, SCOPES
 
 logger = logging.getLogger(__name__)
 
@@ -32,27 +32,42 @@ class GoogleDriveManager:
             self.service = None
 
     def load_credentials_from_file(self, user_id: str) -> bool:
-        """Load credentials from file"""
+        """Load Drive credentials from Railway environment variables, with legacy file fallback."""
+        if self.load_credentials_from_env():
+            return True
         token_file = f"token_{user_id}.json"
         if not os.path.exists(token_file):
             return False
-
         try:
             with open(token_file, 'r') as f:
                 creds_data = json.load(f)
-
             credentials = Credentials.from_authorized_user_info(creds_data)
-
-            # Refresh if needed
             if credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
-                with open(token_file, 'w') as f:
-                    f.write(credentials.to_json())
-
             self.set_credentials(credentials)
             return True
         except Exception as e:
             logger.error(f"Failed to load credentials: {e}")
+            return False
+
+    def load_credentials_from_env(self) -> bool:
+        """Build OAuth credentials entirely from environment variables."""
+        if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN):
+            return False
+        try:
+            credentials = Credentials(
+                token=None,
+                refresh_token=GOOGLE_REFRESH_TOKEN,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=GOOGLE_CLIENT_ID,
+                client_secret=GOOGLE_CLIENT_SECRET,
+                scopes=SCOPES,
+            )
+            credentials.refresh(Request())
+            self.set_credentials(credentials)
+            return self.service is not None
+        except Exception as e:
+            logger.error(f"Failed to load credentials from environment: {e}")
             return False
 
     def get_storage_info(self) -> Optional[Dict]:
@@ -241,3 +256,19 @@ class GoogleDriveManager:
         except HttpError as e:
             logger.error(f"Failed to download file: {e}")
             return False
+
+    def list_files_by_prefix(self, prefix: str, limit: int = 100) -> List[Dict]:
+        """List non-trashed files whose names start with a prefix."""
+        if not self.service:
+            return []
+        try:
+            safe_prefix = prefix.replace("'", "\\'")
+            results = self.service.files().list(
+                q=f"name contains '{safe_prefix}' and trashed=false",
+                pageSize=limit,
+                fields='files(id, name, modifiedTime)'
+            ).execute()
+            return [f for f in results.get('files', []) if f.get('name', '').startswith(prefix)]
+        except HttpError as e:
+            logger.error(f"Failed to list files by prefix: {e}")
+            return []

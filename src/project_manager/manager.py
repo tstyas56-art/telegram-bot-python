@@ -23,14 +23,19 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectManager:
-    def __init__(self, registry: ProjectRegistry, runtime_store, workspace_dir: str, log_store: ProjectLogStore):
+    def __init__(self, registry: ProjectRegistry, runtime_store, workspace_dir: str, log_store: ProjectLogStore, notifier=None):
         self.registry = registry
         self.runtime_store = runtime_store
         self.workspace_dir = Path(workspace_dir)
         self.log_store = log_store
+        self.notifier = notifier
         self.processes: Dict[str, asyncio.subprocess.Process] = {}
         self.running_state: Dict[str, RuntimeProjectState] = runtime_store.load()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    async def notify_owner(self, message: str) -> None:
+        if self.notifier:
+            await self.notifier(message)
 
     def running_count(self) -> int:
         return sum(1 for process in self.processes.values() if process.returncode is None)
@@ -44,6 +49,7 @@ class ProjectManager:
         project_dir.mkdir(parents=True, exist_ok=True)
         archive_path = self.workspace_dir / f"{project.project_id}.zip"
         if not drive_manager.download_file(project.drive_file_id, str(archive_path)):
+            await self.notify_owner(t("drive_download_failed", name=project.project_name))
             raise RuntimeError(t("drive_download_failed", name=project.project_name))
         safe_extract_zip(str(archive_path), str(project_dir))
         archive_path.unlink(missing_ok=True)
@@ -70,8 +76,18 @@ class ProjectManager:
             )
             return_code = await process.wait()
             if return_code != 0:
+                await self.notify_owner(t("requirements_failed"))
                 raise RuntimeError(t("requirements_failed"))
 
+
+    def validate_entry_file(self, project_dir: Path, entry_file: str) -> str:
+        entry = Path(entry_file)
+        if entry.is_absolute() or ".." in entry.parts:
+            raise ValueError("ملف التشغيل غير آمن أو خارج مجلد المشروع")
+        target = (project_dir / entry).resolve()
+        if not str(target).startswith(str(project_dir.resolve())) or not target.is_file():
+            raise ValueError("ملف التشغيل غير موجود داخل مجلد المشروع")
+        return str(entry)
     async def start_project(
         self,
         project_id: str,
@@ -88,12 +104,13 @@ class ProjectManager:
         project = self.registry.get(project_id)
         if not project:
             raise ValueError(t("manager_project_not_found"))
-        if entry_file:
-            project.main_entry_file = entry_file
-            project.startup_command = ["python", entry_file]
-        if not project.startup_command:
+        if not project.startup_command and not entry_file:
             raise ValueError(t("no_startup_command"))
         project_dir = await self.ensure_project_files(project, drive_manager, force=force_download)
+        if entry_file:
+            safe_entry = self.validate_entry_file(project_dir, entry_file)
+            project.main_entry_file = safe_entry
+            project.startup_command = ["python", safe_entry]
         await self.install_requirements(project_id, project_dir)
         log_path = self.log_store.path_for(project_id)
         log_file = log_path.open("ab", buffering=0)
@@ -140,6 +157,8 @@ class ProjectManager:
                 await self.start_project(project_id, drive_manager, auto_restart=True, restart_attempts=attempts)
                 return
             logger.error("Project %s reached max restart attempts", project_id)
+            await self.notify_owner(f"❌ تعطل المشروع {project_id} بعد استنفاد كل محاولات إعادة التشغيل.")
+        self.log_store.archive(project_id, drive_manager)
         self.running_state.pop(project_id, None)
         self.runtime_store.save(self.running_state, drive_manager)
 
@@ -159,6 +178,7 @@ class ProjectManager:
             project.status = "stopped"
             self.registry.save(project, drive_manager)
         self.runtime_store.save(self.running_state, drive_manager)
+        self.log_store.archive(project_id, drive_manager)
         return t("manager_stopped")
 
     async def restart_project(self, project_id: str, drive_manager, entry_file: Optional[str] = None) -> str:
@@ -168,6 +188,7 @@ class ProjectManager:
     async def recover(self, drive_manager) -> int:
         self.registry.restore_from_drive(drive_manager)
         self.runtime_store.restore_from_drive(drive_manager)
+        self.log_store.restore_all([project.project_id for project in self.registry.list_projects()], drive_manager)
         self.running_state = self.runtime_store.load()
         count = 0
         for project_id, state in list(self.running_state.items()):
@@ -180,8 +201,9 @@ class ProjectManager:
                     force_download=True,
                 )
                 count += 1
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to recover project %s", project_id)
+                await self.notify_owner(f"❌ فشل استعادة المشروع {project_id}: {exc}")
         return count
 
     async def stop_all(self, drive_manager) -> int:
