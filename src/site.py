@@ -72,7 +72,7 @@ def callback():
         flow.fetch_token(authorization_response=request.url)
 
         credentials = flow.credentials
-        user_id = request.args.get('user_id', 'default')
+        user_id = request.args.get('state') or session.get('state') or 'default'
 
         # Store credentials
         user_credentials[user_id] = credentials

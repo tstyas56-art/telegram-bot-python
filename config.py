@@ -31,3 +31,12 @@ RATE_LIMIT_PERIOD = 60  # seconds
 # Logging configuration
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+
+# Personal hosting manager configuration
+OWNER_USER_ID = os.getenv('OWNER_USER_ID')
+PROJECT_REGISTRY_FILE = os.getenv('PROJECT_REGISTRY_FILE', 'data/projects.json')
+RUNTIME_STATE_FILE = os.getenv('RUNTIME_STATE_FILE', 'data/runtime.json')
+PROJECT_WORKSPACE = os.getenv('PROJECT_WORKSPACE', 'data/workspace')
+PROJECT_LOG_DIR = os.getenv('PROJECT_LOG_DIR', 'data/logs')
+RUNTIME_STATE_DRIVE_NAME = os.getenv('RUNTIME_STATE_DRIVE_NAME', 'runtime.json')

@@ -6,12 +6,13 @@ Google Drive operations
 import os
 import json
 import logging
+import io
 from typing import Optional, Dict, List
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 logger = logging.getLogger(__name__)
 
@@ -189,3 +190,54 @@ class GoogleDriveManager:
         except HttpError as e:
             logger.error(f"Failed to get file info: {e}")
             return None
+
+    def upsert_file(self, file_path: str, file_name: str, file_id: Optional[str] = None) -> Optional[str]:
+        """Create or update a Drive file and return its id."""
+        if not self.service:
+            return None
+        try:
+            media = MediaFileUpload(file_path, resumable=True)
+            if file_id:
+                updated = self.service.files().update(
+                    fileId=file_id, media_body=media, fields='id'
+                ).execute()
+                return updated.get('id')
+            return self.upload_file(file_path, file_name, chunked=True)
+        except HttpError as e:
+            logger.error(f"Failed to upsert file: {e}")
+            return None
+
+    def find_file_by_name(self, file_name: str) -> Optional[str]:
+        """Find the newest non-trashed Drive file by exact name."""
+        if not self.service:
+            return None
+        try:
+            safe_name = file_name.replace("'", "\\'")
+            results = self.service.files().list(
+                q=f"name='{safe_name}' and trashed=false",
+                orderBy='modifiedTime desc',
+                pageSize=1,
+                fields='files(id, name)'
+            ).execute()
+            files = results.get('files', [])
+            return files[0]['id'] if files else None
+        except HttpError as e:
+            logger.error(f"Failed to find file by name: {e}")
+            return None
+
+    def download_file(self, file_id: str, destination_path: str) -> bool:
+        """Download a Drive file to a local path."""
+        if not self.service:
+            return False
+        try:
+            os.makedirs(os.path.dirname(destination_path) or '.', exist_ok=True)
+            request = self.service.files().get_media(fileId=file_id)
+            with open(destination_path, 'wb') as handle:
+                downloader = MediaIoBaseDownload(handle, request)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+            return True
+        except HttpError as e:
+            logger.error(f"Failed to download file: {e}")
+            return False
