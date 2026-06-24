@@ -79,6 +79,27 @@ class ProjectManager:
                 await self.notify_owner(t("requirements_failed"))
                 raise RuntimeError(t("requirements_failed"))
 
+    async def install_dependencies(self, project_id: str, project_dir: Path) -> None:
+        """Install Node.js dependencies if package.json exists."""
+        package_json = project_dir / "package.json"
+        if not package_json.exists():
+            return
+        log_path = self.log_store.path_for(project_id)
+        with log_path.open("ab", buffering=0) as log_file:
+            log_file.write(b"\n--- Installing npm dependencies ---\n")
+            process = await asyncio.create_subprocess_exec(
+                "npm",
+                "install",
+                cwd=str(project_dir),
+                stdout=log_file,
+                stderr=asyncio.subprocess.STDOUT,
+                env=os.environ,
+            )
+            return_code = await process.wait()
+            if return_code != 0:
+                await self.notify_owner(t("npm_install_failed"))
+                raise RuntimeError(t("npm_install_failed"))
+
 
     def validate_entry_file(self, project_dir: Path, entry_file: str) -> str:
         entry = Path(entry_file)
@@ -112,15 +133,33 @@ class ProjectManager:
             project.main_entry_file = safe_entry
             project.startup_command = ["python", safe_entry]
         await self.install_requirements(project_id, project_dir)
+        await self.install_dependencies(project_id, project_dir)
         log_path = self.log_store.path_for(project_id)
         log_file = log_path.open("ab", buffering=0)
-        command = [sys.executable if part == "python" else part for part in project.startup_command]
+        # Build environment with project-specific variables
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        for key, value in project.environment_vars.items():
+            env[key] = value
+        # Map command interpreter correctly
+        command = []
+        for part in project.startup_command:
+            if part == "python":
+                command.append(sys.executable)
+            elif part == "node":
+                node_path = shutil.which("node") or "/usr/local/bin/node"
+                command.append(node_path)
+            elif part == "npm":
+                npm_path = shutil.which("npm") or "/usr/local/bin/npm"
+                command.append(npm_path)
+            else:
+                command.append(part)
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(project_dir),
             stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=env,
         )
         self.processes[project_id] = process
         project.status = "running"
