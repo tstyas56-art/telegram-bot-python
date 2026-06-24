@@ -22,7 +22,12 @@ class RuntimeStateStore:
         self.drive_file_id: Optional[str] = None
 
     def load(self) -> Dict[str, RuntimeProjectState]:
-        raw = self.store.read({"running_projects": {}, "drive_file_id": self.drive_file_id})
+        try:
+            raw = self.store.read({"running_projects": {}, "drive_file_id": self.drive_file_id})
+        except Exception as exc:
+            logger.exception("runtime.json is missing or corrupt; starting with empty runtime state: %s", exc)
+            raw = {"running_projects": {}, "drive_file_id": self.drive_file_id}
+            self.store.write(raw)
         self.drive_file_id = raw.get("drive_file_id") or self.drive_file_id
         return {
             project_id: RuntimeProjectState.from_dict(data)

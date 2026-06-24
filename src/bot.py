@@ -33,6 +33,7 @@ from project_manager.discovery import discover_project, safe_extract_zip
 from project_manager.manager import ProjectManager
 from runtime.state import RuntimeStateStore
 from storage.project_registry import ProjectRegistry
+from translations.ar import t
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class WOWDriveBot:
 
         # Ensure upload and hosting folders exist
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        self.registry = ProjectRegistry(PROJECT_REGISTRY_FILE)
+        self.registry = ProjectRegistry(PROJECT_REGISTRY_FILE, PROJECT_REGISTRY_DRIVE_NAME)
         self.runtime_store = RuntimeStateStore(RUNTIME_STATE_FILE, RUNTIME_STATE_DRIVE_NAME)
         self.log_store = ProjectLogStore(PROJECT_LOG_DIR)
         self.project_manager = ProjectManager(
@@ -111,7 +112,7 @@ class WOWDriveBot:
         """Upload large file using chunked upload with progress tracking"""
         manager = self.get_drive_manager(task.user_id)
         if not manager.service:
-            task.error = "Authentication required. Please use /login first."
+            task.error = t("auth_required")
             return False
 
         def progress_callback(progress: int):
@@ -133,7 +134,7 @@ class WOWDriveBot:
                 await self.update_progress_message(task)
                 return True
             else:
-                task.error = "Upload failed"
+                task.error = t("upload_failed", error="Google Drive")
                 task.status = "failed"
                 await self.update_progress_message(task)
                 return False
@@ -149,7 +150,7 @@ class WOWDriveBot:
         """Upload small file directly"""
         manager = self.get_drive_manager(task.user_id)
         if not manager.service:
-            task.error = "Authentication required. Please use /login first."
+            task.error = t("auth_required")
             return False
 
         try:
@@ -163,7 +164,7 @@ class WOWDriveBot:
                 await self.update_progress_message(task)
                 return True
             else:
-                task.error = "Upload failed"
+                task.error = t("upload_failed", error="Google Drive")
                 task.status = "failed"
                 await self.update_progress_message(task)
                 return False
@@ -179,26 +180,26 @@ class WOWDriveBot:
         """Update the progress message for an upload task"""
         try:
             if task.status == "queued":
-                text = f"📤 **{task.file_name}**\n\n⏳ Request added to the queue!"
+                text = t("queued", file_name=task.file_name)
             elif task.status == "uploading":
-                text = f"📤 **{task.file_name}**\n\n🔄 Uploading... {task.progress}%"
+                text = t("uploading", file_name=task.file_name, progress=task.progress)
             elif task.status == "completed":
-                text = f"✅ **{task.file_name}**\n\n🎉 Upload completed!\n\n🔗 File ID: `{task.drive_file_id}`"
+                text = t("completed", file_name=task.file_name, drive_file_id=task.drive_file_id)
             elif task.status == "failed":
-                text = f"❌ **{task.file_name}**\n\n💥 Upload failed!\n\nError: {task.error}"
+                text = t("failed", file_name=task.file_name, error=task.error)
             else:
-                text = f"📤 **{task.file_name}**\n\nStatus: {task.status}"
+                text = t("status_generic", file_name=task.file_name, status=task.status)
 
             keyboard = []
             if task.status == "uploading":
                 keyboard.append([InlineKeyboardButton(
-                    "❌ Cancel", callback_data=f"cancel_{task.file_id}")])
+                    t("cancel_button"), callback_data=f"cancel_{task.file_id}")])
             elif task.status == "completed":
                 keyboard.append([
                     InlineKeyboardButton(
-                        "📋 View in Drive", url=f"https://drive.google.com/file/d/{task.drive_file_id}/view"),
+                        t("view_drive_button"), url=f"https://drive.google.com/file/d/{task.drive_file_id}/view"),
                     InlineKeyboardButton(
-                        "🗑️ Delete", callback_data=f"delete_{task.drive_file_id}")
+                        t("delete_button"), callback_data=f"delete_{task.drive_file_id}")
                 ])
 
             reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
@@ -245,7 +246,7 @@ class WOWDriveBot:
         try:
             file_path = os.path.join(UPLOAD_FOLDER, f"{task.file_id}_{task.file_name}")
             if context is None:
-                raise RuntimeError("Telegram context is required to download real files")
+                raise RuntimeError("سياق تيليجرام مطلوب لتنزيل الملفات الحقيقية")
             telegram_file = await context.bot.get_file(task.file_id)
             await telegram_file.download_to_drive(file_path)
             return file_path
@@ -256,10 +257,10 @@ class WOWDriveBot:
     async def register_project_archive(self, user_id: int, file_path: str, file_name: str) -> ProjectRecord:
         """Upload a zip archive to Drive, inspect it, and record metadata."""
         if not zipfile.is_zipfile(file_path):
-            raise ValueError("Project uploads must be ZIP archives")
+            raise ValueError("يجب أن يكون المشروع ملف ZIP")
         manager = self.get_drive_manager(user_id)
         if not manager.service:
-            raise ValueError("Authentication required. Please use /login first.")
+            raise ValueError(t("auth_required"))
 
         extract_dir = os.path.join(tempfile.gettempdir(), f"project_scan_{uuid.uuid4().hex}")
         safe_extract_zip(file_path, extract_dir)
@@ -270,7 +271,7 @@ class WOWDriveBot:
         existing = self.registry.find_by_name(base_name)
         drive_file_id = manager.upload_file_chunked(file_path, file_name)
         if not drive_file_id:
-            raise RuntimeError("Upload to Google Drive failed")
+            raise RuntimeError("فشل الرفع إلى Google Drive")
 
         if existing:
             version = len(existing.versions) + 1
@@ -280,7 +281,7 @@ class WOWDriveBot:
             existing.project_type = detected["project_type"] or "unknown"
             existing.main_entry_file = detected["main_entry_file"]
             existing.startup_command = detected["startup_command"]
-            self.registry.save(existing)
+            self.registry.save(existing, manager)
             return existing
 
         project = ProjectRecord(
@@ -292,7 +293,7 @@ class WOWDriveBot:
             main_entry_file=detected["main_entry_file"],
             startup_command=detected["startup_command"],
         )
-        self.registry.save(project)
+        self.registry.save(project, manager)
         return project
 
 
@@ -303,42 +304,8 @@ bot = WOWDriveBot()
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
-    welcome_text = """
-🤖 **WOWDrive Bot** — Upload from Telegram to Google Drive
-
-📋 **Commands**
-• /start — Start the bot
-• /help — Show this help message
-• /login — Connect your Google Drive account
-• /stat or /storage — Show your Drive storage usage
-• /list — List your recent files
-• /projects — List hosted projects
-• /upload — Upload a ZIP project
-• /start_project <id> — Start a project
-• /stop_project <id> — Stop a project
-• /restart_project <id> — Restart a project
-• /project_info <id> — Show project details
-• /logs <id> — Show recent logs
-• /status — Show runtime status
-• /recover — Restore running projects from Drive state
-• /rename <fileId> <newName> — Rename a file
-• /remove <fileId> — Delete a file
-• /privacy — Privacy Policy & Terms
-
-📤 **Upload Files**
-• Send any document, photo, or video to upload to Drive
-• Small files (≤20MB): Direct upload
-• Large files (>20MB): Chunked upload with progress tracking
-• Use buttons to cancel or view progress
-
-⚡️ **Upload Process**
-1️⃣ Request added to the queue!
-2️⃣ Starting to upload...
-3️⃣ Progress updates every 20 seconds
-4️⃣ Upload completed!
-"""
-    await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN)
+    """Handle /start command."""
+    await update.message.reply_text(t("start_help"), parse_mode=ParseMode.MARKDOWN)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,150 +314,82 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /login command"""
+    """Handle /login command."""
     user_id = update.effective_user.id
-
     auth_url = await bot.get_auth_url(user_id)
     if auth_url:
-        message = f"""
-🔐 **Google Drive Authentication**
-
-Click the link below to authorize the bot:
-{auth_url}
-
-After authorization, you'll be redirected to complete the setup.
-"""
-        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(t("login_message", auth_url=auth_url), parse_mode=ParseMode.MARKDOWN)
     else:
-        await update.message.reply_text("❌ Failed to start authentication. Please try again later.")
+        await update.message.reply_text(t("login_failed"))
 
 
 async def stat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stat command"""
+    """Handle /stat command."""
     user_id = update.effective_user.id
-
     storage_info = await bot.get_storage_info(user_id)
     if not storage_info:
-        await update.message.reply_text("❌ Please authenticate first with /login")
+        await update.message.reply_text(t("auth_required"))
         return
-
     total = int(storage_info.get('limit', 0))
     used = int(storage_info.get('usage', 0))
     free = total - used
-
-    total_gb = total / (1024**3)
-    used_gb = used / (1024**3)
-    free_gb = free / (1024**3)
-
     usage_percent = (used / total * 100) if total > 0 else 0
-
-    message = f"""
-📊 **Drive Storage Usage**
-
-💾 **Total Space:** {total_gb:.2f} GB
-📈 **Used:** {used_gb:.2f} GB ({usage_percent:.1f}%)
-🆓 **Free:** {free_gb:.2f} GB
-"""
-    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("storage_info", total=total/(1024**3), used=used/(1024**3), free=free/(1024**3), percent=usage_percent), parse_mode=ParseMode.MARKDOWN)
 
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /list command"""
+    """Handle /list command."""
     user_id = update.effective_user.id
-
     files = await bot.list_recent_files(user_id)
     if not files:
-        await update.message.reply_text("❌ Please authenticate first with /login")
+        await update.message.reply_text(t("auth_required"))
         return
-
-    if not files:
-        await update.message.reply_text("📁 No files found in your Drive")
-        return
-
-    message = "📁 **Recent Files:**\n\n"
+    message = t("recent_files_header")
     for i, file in enumerate(files[:10], 1):
         size = int(file.get('size', 0))
         size_mb = size / (1024**2) if size > 0 else 0
-        created = file.get('createdTime', 'Unknown')
-
+        created = file.get('createdTime', 'غير معروف')
         message += f"{i}. **{file['name']}**\n"
         message += f"   📏 {size_mb:.1f} MB | 🆔 `{file['id']}`\n"
         message += f"   📅 {created[:10]}\n\n"
-
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
 
 async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /rename command"""
+    """Handle /rename command."""
     user_id = update.effective_user.id
     args = context.args
-
     if len(args) < 2:
-        await update.message.reply_text("Usage: /rename <fileId> <newName>")
+        await update.message.reply_text(t("rename_usage"))
         return
-
     file_id = args[0]
     new_name = ' '.join(args[1:])
-
     manager = bot.get_drive_manager(user_id)
     if not manager.service:
-        await update.message.reply_text("❌ Please authenticate first with /login")
+        await update.message.reply_text(t("auth_required"))
         return
-
     success = manager.rename_file(file_id, new_name)
-    if success:
-        await update.message.reply_text(f"✅ File renamed to '{new_name}'")
-    else:
-        await update.message.reply_text("❌ Failed to rename file")
+    await update.message.reply_text(t("renamed", name=new_name) if success else t("rename_failed"))
 
 
 async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /remove command"""
+    """Handle /remove command."""
     user_id = update.effective_user.id
     args = context.args
-
     if not args:
-        await update.message.reply_text("Usage: /remove <fileId>")
+        await update.message.reply_text(t("remove_usage"))
         return
-
-    file_id = args[0]
-
     manager = bot.get_drive_manager(user_id)
     if not manager.service:
-        await update.message.reply_text("❌ Please authenticate first with /login")
+        await update.message.reply_text(t("auth_required"))
         return
-
-    success = manager.delete_file(file_id)
-    if success:
-        await update.message.reply_text("✅ File deleted successfully")
-    else:
-        await update.message.reply_text("❌ Failed to delete file")
+    success = manager.delete_file(args[0])
+    await update.message.reply_text(t("removed") if success else t("remove_failed"))
 
 
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /privacy command"""
-    privacy_text = """
-🔒 **Privacy Policy & Terms**
-
-**Data Collection:**
-• We only store your Google Drive authentication tokens
-• No file content is stored on our servers
-• Files are uploaded directly to your Google Drive
-
-**Data Usage:**
-• Authentication tokens are used only for file operations
-• No data is shared with third parties
-• You can revoke access anytime from Google Account settings
-
-**Terms of Service:**
-• Use responsibly and in accordance with Google Drive ToS
-• We're not responsible for your files or their content
-• Service availability is not guaranteed
-
-**Contact:**
-For questions, contact the bot administrator.
-"""
-    await update.message.reply_text(privacy_text, parse_mode=ParseMode.MARKDOWN)
+    """Handle /privacy command."""
+    await update.message.reply_text(t("privacy"), parse_mode=ParseMode.MARKDOWN)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,7 +399,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not document:
         return
     if document.file_size > MAX_FILE_SIZE:
-        await update.message.reply_text(f"❌ File too large! Maximum size is {MAX_FILE_SIZE // (1024**3)}GB")
+        await update.message.reply_text(t("file_too_large", max_gb=MAX_FILE_SIZE // (1024**3)))
         return
 
     task = UploadTask(
@@ -510,24 +409,24 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_size=document.file_size,
         message_id=update.message.message_id
     )
-    await update.message.reply_text(f"📥 Downloading **{task.file_name}**...", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("download_started", file_name=task.file_name), parse_mode=ParseMode.MARKDOWN)
     file_path = await bot.download_telegram_file(task, context)
     if not file_path:
-        await update.message.reply_text("❌ Failed to download file from Telegram")
+        await update.message.reply_text(t("download_failed"))
         return
     try:
         if task.file_name.lower().endswith(".zip") and is_owner(update):
             project = await bot.register_project_archive(user_id, file_path, task.file_name)
             await update.message.reply_text(
-                f"✅ Project registered: **{project.project_name}**\nID: `{project.project_id}`\nType: {project.project_type}\nEntry: `{project.main_entry_file}`",
+                t("project_registered", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file),
                 parse_mode=ParseMode.MARKDOWN,
             )
         else:
             success = await (bot.upload_file_chunked(task, file_path) if task.file_size > 20 * 1024 * 1024 else bot.upload_file_direct(task, file_path))
-            await update.message.reply_text("✅ Upload completed" if success else f"❌ Upload failed: {task.error}")
+            await update.message.reply_text(t("upload_completed") if success else t("upload_failed", error=task.error))
     except Exception as exc:
         logger.exception("Document handling failed")
-        await update.message.reply_text(f"❌ Upload failed: {exc}")
+        await update.message.reply_text(t("upload_failed", error=exc))
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -543,7 +442,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check file size
     if photo.file_size > MAX_FILE_SIZE:
-        await update.message.reply_text(f"❌ File too large! Maximum size is {MAX_FILE_SIZE // (1024**3)}GB")
+        await update.message.reply_text(t("file_too_large", max_gb=MAX_FILE_SIZE // (1024**3)))
         return
 
     # Create upload task
@@ -558,7 +457,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot.upload_queue.append(task)
 
     # Send initial message
-    message = f"📤 **{task.file_name}**\n\n⏳ Request added to the queue!"
+    message = t("queued", file_name=task.file_name)
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
 
@@ -572,7 +471,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check file size
     if video.file_size > MAX_FILE_SIZE:
-        await update.message.reply_text(f"❌ File too large! Maximum size is {MAX_FILE_SIZE // (1024**3)}GB")
+        await update.message.reply_text(t("file_too_large", max_gb=MAX_FILE_SIZE // (1024**3)))
         return
 
     # Create upload task
@@ -587,7 +486,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot.upload_queue.append(task)
 
     # Send initial message
-    message = f"📤 **{task.file_name}**\n\n⏳ Request added to the queue!"
+    message = t("queued", file_name=task.file_name)
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
 
@@ -599,12 +498,12 @@ def is_owner(update: Update) -> bool:
 async def require_owner(update: Update) -> bool:
     if is_owner(update):
         return True
-    await update.message.reply_text("❌ This personal hosting bot is restricted to the owner.")
+    await update.message.reply_text(t("owner_only"))
     return False
 
 
 async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📦 Send a .zip file as a Telegram document to upload and register a project.")
+    await update.message.reply_text(t("upload_instruction"))
 
 
 async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -612,9 +511,9 @@ async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     projects = bot.registry.list_projects()
     if not projects:
-        await update.message.reply_text("📁 No projects registered yet. Use /upload and send a ZIP archive.")
+        await update.message.reply_text(t("no_projects"))
         return
-    lines = ["📁 **Projects**"]
+    lines = [t("projects_header")]
     for project in projects:
         lines.append(f"• `{project.project_id}` — **{project.project_name}** ({project.project_type}) — {project.status}")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
@@ -629,14 +528,14 @@ async def start_project_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     project_id = _project_id_from_args(context)
     if not project_id:
-        await update.message.reply_text("Usage: /start_project <project_id>")
+        await update.message.reply_text(t("start_usage"))
         return
     try:
-        result = await bot.project_manager.start_project(project_id, bot.get_drive_manager(update.effective_user.id), auto_restart=True)
-        await update.message.reply_text(f"✅ Project {result}")
+        result = await bot.project_manager.start_project(project_id, bot.get_drive_manager(update.effective_user.id), auto_restart=True, entry_file=(context.args[1] if len(context.args) > 1 else None))
+        await update.message.reply_text(t("project_started", result=result))
     except Exception as exc:
         logger.exception("Failed to start project")
-        await update.message.reply_text(f"❌ Failed to start project: {exc}")
+        await update.message.reply_text(t("operation_failed", error=exc))
 
 
 async def stop_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -644,10 +543,10 @@ async def stop_project_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     project_id = _project_id_from_args(context)
     if not project_id:
-        await update.message.reply_text("Usage: /stop_project <project_id>")
+        await update.message.reply_text(t("stop_usage"))
         return
     result = await bot.project_manager.stop_project(project_id, bot.get_drive_manager(update.effective_user.id))
-    await update.message.reply_text(f"✅ Project {result}")
+    await update.message.reply_text(t("project_started", result=result))
 
 
 async def restart_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -655,10 +554,10 @@ async def restart_project_command(update: Update, context: ContextTypes.DEFAULT_
         return
     project_id = _project_id_from_args(context)
     if not project_id:
-        await update.message.reply_text("Usage: /restart_project <project_id>")
+        await update.message.reply_text(t("restart_usage"))
         return
-    result = await bot.project_manager.restart_project(project_id, bot.get_drive_manager(update.effective_user.id))
-    await update.message.reply_text(f"✅ Project {result}")
+    result = await bot.project_manager.restart_project(project_id, bot.get_drive_manager(update.effective_user.id), entry_file=(context.args[1] if len(context.args) > 1 else None))
+    await update.message.reply_text(t("project_started", result=result))
 
 
 async def delete_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -667,13 +566,13 @@ async def delete_project_command(update: Update, context: ContextTypes.DEFAULT_T
     project_id = _project_id_from_args(context)
     delete_drive = len(context.args) > 1 and context.args[1] == "--drive"
     if not project_id:
-        await update.message.reply_text("Usage: /delete_project <project_id> [--drive]")
+        await update.message.reply_text(t("delete_usage"))
         return
     await bot.project_manager.stop_project(project_id, bot.get_drive_manager(update.effective_user.id))
-    project = bot.registry.delete(project_id)
+    project = bot.registry.delete(project_id, bot.get_drive_manager(update.effective_user.id))
     if project and delete_drive:
         bot.get_drive_manager(update.effective_user.id).delete_file(project.drive_file_id)
-    await update.message.reply_text("✅ Project deleted" if project else "❌ Project not found")
+    await update.message.reply_text(t("project_deleted") if project else t("project_not_found"))
 
 
 async def project_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -682,10 +581,10 @@ async def project_info_command(update: Update, context: ContextTypes.DEFAULT_TYP
     project_id = _project_id_from_args(context)
     project = bot.registry.get(project_id) if project_id else None
     if not project:
-        await update.message.reply_text("Usage: /project_info <project_id>")
+        await update.message.reply_text(t("info_usage"))
         return
     await update.message.reply_text(
-        f"ℹ️ **{project.project_name}**\nID: `{project.project_id}`\nType: {project.project_type}\nEntry: `{project.main_entry_file}`\nStatus: {project.status}\nAuto restart: {project.auto_restart}\nDrive file: `{project.drive_file_id}`",
+        t("project_info", name=project.project_name, id=project.project_id, type=project.project_type, entry=project.main_entry_file, status=project.status, auto_restart=project.auto_restart, drive_file_id=project.drive_file_id),
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -695,9 +594,10 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     project_id = _project_id_from_args(context)
     if not project_id:
-        await update.message.reply_text("Usage: /logs <project_id>")
+        await update.message.reply_text(t("logs_usage"))
         return
-    text = bot.log_store.tail(project_id, 80)
+    lines = int(context.args[1]) if len(context.args) > 1 and context.args[1] in {"50", "100", "500"} else 100
+    text = bot.log_store.tail(project_id, lines)
     await update.message.reply_text(f"```\n{text[-3500:]}\n```", parse_mode=ParseMode.MARKDOWN)
 
 
@@ -705,7 +605,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     lines = bot.project_manager.status_lines()
-    await update.message.reply_text("🟢 **Status**\n" + ("\n".join(lines) if lines else "No projects."), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
 
 
 async def storage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -716,7 +616,65 @@ async def recover_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_owner(update):
         return
     count = await bot.project_manager.recover(bot.get_drive_manager(update.effective_user.id))
-    await update.message.reply_text(f"✅ Recovery complete. Restored {count} project(s).")
+    await update.message.reply_text(t("recover_done", count=count))
+
+
+async def running_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    lines = bot.project_manager.running_lines()
+    await update.message.reply_text(t("status_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+
+
+async def resources_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    lines = bot.project_manager.resource_lines()
+    await update.message.reply_text(t("resources_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+
+
+async def uptime_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    lines = bot.project_manager.uptime_lines()
+    await update.message.reply_text(t("uptime_header", lines=("\n".join(lines) if lines else t("no_running"))), parse_mode=ParseMode.MARKDOWN)
+
+
+async def stop_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    count = await bot.project_manager.stop_all(bot.get_drive_manager(update.effective_user.id))
+    await update.message.reply_text(t("all_stopped", count=count))
+
+
+async def restart_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    try:
+        count = await bot.project_manager.restart_all(bot.get_drive_manager(update.effective_user.id))
+        await update.message.reply_text(t("all_restarted", count=count))
+    except Exception as exc:
+        logger.exception("فشل إعادة تشغيل كل المشاريع")
+        await update.message.reply_text(t("operation_failed", error=exc))
+
+
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    manager = bot.get_drive_manager(update.effective_user.id)
+    if not manager.service:
+        await update.message.reply_text(t("auth_required"))
+        return
+    bot.registry.backup_to_drive(manager)
+    bot.runtime_store.save(bot.project_manager.running_state, manager)
+    await update.message.reply_text(t("backup_done"))
+
+
+async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_owner(update):
+        return
+    lines = bot.project_manager.health_lines(bot.get_drive_manager(update.effective_user.id))
+    await update.message.reply_text(t("health_header", lines="\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -729,12 +687,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("cancel_"):
         file_id = data.replace("cancel_", "")
         # Handle cancel logic
-        await query.edit_message_text("❌ Upload cancelled")
+        await query.edit_message_text(t("cancelled"))
 
     elif data.startswith("delete_"):
         drive_file_id = data.replace("delete_", "")
         # Handle delete logic
-        await query.edit_message_text("🗑️ File deleted from Drive")
+        await query.edit_message_text(t("drive_deleted"))
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -745,20 +703,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init_recovery(application: Application):
     """Automatically restore desired running projects after Railway restarts."""
     if not OWNER_USER_ID:
-        logger.info("OWNER_USER_ID not configured; skipping automatic project recovery")
+        logger.info("لم يتم ضبط OWNER_USER_ID؛ سيتم تخطي الاستعادة التلقائية")
         return
     manager = bot.get_drive_manager(int(OWNER_USER_ID))
     if not manager.service:
-        logger.warning("Owner Google Drive credentials unavailable; automatic recovery skipped")
+        logger.warning("بيانات اعتماد Google Drive للمالك غير متاحة؛ تم تخطي الاستعادة التلقائية")
         return
     recovered = await bot.project_manager.recover(manager)
-    logger.info("Automatic recovery restored %s project(s)", recovered)
+    logger.info("الاستعادة التلقائية شغّلت %s مشروع/مشاريع", recovered)
 
 
 def start_bot():
     """Start the Telegram bot"""
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not found in environment variables")
+        logger.error("BOT_TOKEN غير موجود في متغيرات البيئة")
         return
 
     # Create application
@@ -784,6 +742,13 @@ def start_bot():
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("storage", storage_command))
     application.add_handler(CommandHandler("recover", recover_command))
+    application.add_handler(CommandHandler("running", running_command))
+    application.add_handler(CommandHandler("resources", resources_command))
+    application.add_handler(CommandHandler("uptime", uptime_command))
+    application.add_handler(CommandHandler("stop_all", stop_all_command))
+    application.add_handler(CommandHandler("restart_all", restart_all_command))
+    application.add_handler(CommandHandler("backup", backup_command))
+    application.add_handler(CommandHandler("health", health_command))
 
     # Message handlers
     application.add_handler(MessageHandler(
@@ -798,5 +763,5 @@ def start_bot():
     application.add_error_handler(error_handler)
 
     # Start the bot
-    logger.info("Starting WOWDrive Bot...")
+    logger.info("بدء تشغيل WOWDrive Bot...")
     application.run_polling()

@@ -51,6 +51,7 @@ class RuntimeProjectState:
     auto_restart: bool
     last_start_timestamp: str
     status: str = "running"
+    restart_attempts: int = 0
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RuntimeProjectState":

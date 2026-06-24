@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
+from translations.ar import t
+
 
 class ProjectLogStore:
     def __init__(self, log_dir: str):
@@ -17,6 +19,6 @@ class ProjectLogStore:
     def tail(self, project_id: str, lines: int = 80) -> str:
         path = self.path_for(project_id)
         if not path.exists():
-            return "No logs found."
+            return t("no_logs_found")
         with path.open("r", encoding="utf-8", errors="replace") as handle:
-            return "".join(deque(handle, maxlen=lines)) or "Log file is empty."
+            return "".join(deque(handle, maxlen=lines)) or t("empty_log_file")
