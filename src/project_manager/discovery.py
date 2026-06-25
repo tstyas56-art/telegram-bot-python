@@ -106,8 +106,4 @@ def discover_project(root_dir: str) -> Dict[str, Optional[str]]:
         "main_entry_file": entry,
         "startup_command": startup_command,
         "dependency_file": _find_dependency_file(root, entry) if project_type not in {"nodejs", "javascript", "shell_script"} else None,
-<<<<<<< HEAD
     }
-=======
-    }
->>>>>>> codex/fix-environment-variable-button-functionality
