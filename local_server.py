@@ -106,4 +106,5 @@ def find_free_port(start_port=8022, max_tries=100):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", find_free_port(8022)))
     print(f"تشغيل الخادم على: http://0.0.0.0:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # تعديل السطر ليكون بالتمرير النصي:
+    uvicorn.run("local_server:app", host="0.0.0.0", port=port, reload=False)
