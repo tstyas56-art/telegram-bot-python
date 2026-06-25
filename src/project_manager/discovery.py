@@ -27,6 +27,23 @@ def _find_first(root: Path, names: List[str]) -> Optional[str]:
     return None
 
 
+def _find_dependency_file(root: Path, entry: Optional[str] = None) -> Optional[str]:
+    """Find the best Python dependency manifest for the detected entry file."""
+    names = ["requirements.txt", "pyproject.toml", "Pipfile"]
+    if entry:
+        entry_parent = (root / entry).parent
+        for current in [entry_parent, *entry_parent.parents]:
+            if root not in [current, *current.parents] and current != root:
+                continue
+            for name in names:
+                candidate = current / name
+                if candidate.is_file():
+                    return str(candidate.relative_to(root))
+            if current == root:
+                break
+    return _find_first(root, names)
+
+
 def discover_project(root_dir: str) -> Dict[str, Optional[str]]:
     """Detect project type and suggested startup command."""
     root = Path(root_dir)
@@ -88,4 +105,5 @@ def discover_project(root_dir: str) -> Dict[str, Optional[str]]:
         "project_type": project_type,
         "main_entry_file": entry,
         "startup_command": startup_command,
+        "dependency_file": _find_dependency_file(root, entry) if project_type not in {"nodejs", "javascript", "shell_script"} else None,
     }
