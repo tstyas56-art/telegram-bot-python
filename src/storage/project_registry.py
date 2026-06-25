@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from models import ProjectRecord
 from storage.json_store import JsonStore
+from storage.mongo_store import MongoStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 class ProjectRegistry:
     """JSON-backed registry of uploaded projects and their Drive archives."""
 
-    def __init__(self, path: str, drive_file_name: str = "projects.json"):
+    def __init__(self, path: str, drive_file_name: str = "projects.json", mongo_url: Optional[str] = None, mongo_database: str = "telegram_hosting_bot"):
         self.path = Path(path)
         self.drive_file_name = drive_file_name
-        self.store = JsonStore(path)
+        self.store = MongoStore(mongo_url, "projects", mongo_database) if mongo_url else JsonStore(path)
         self.drive_file_id: Optional[str] = None
+        self.uses_mongo = bool(mongo_url)
 
     def _load_raw(self) -> Dict:
         try:
@@ -51,7 +53,7 @@ class ProjectRegistry:
         raw.setdefault("projects", {})[project.project_id] = project.to_dict()
         raw["drive_file_id"] = self.drive_file_id
         self.store.write(raw)
-        if drive_manager and drive_manager.service:
+        if drive_manager and drive_manager.service and not self.uses_mongo:
             self.backup_to_drive(drive_manager)
 
     def delete(self, project_id: str, drive_manager=None) -> Optional[ProjectRecord]:
@@ -59,7 +61,7 @@ class ProjectRegistry:
         item = raw.setdefault("projects", {}).pop(project_id, None)
         raw["drive_file_id"] = self.drive_file_id
         self.store.write(raw)
-        if drive_manager and drive_manager.service:
+        if drive_manager and drive_manager.service and not self.uses_mongo:
             self.backup_to_drive(drive_manager)
         return ProjectRecord.from_dict(item) if item else None
 
@@ -76,6 +78,19 @@ class ProjectRegistry:
             logger.exception("Failed to back up project registry to Drive: %s", exc)
             return False
 
+    def restore_from_drive(self, drive_manager) -> bool:
+        if self.uses_mongo:
+            return True
+        try:
+            file_id = self.drive_file_id or drive_manager.find_file_by_name(self.drive_file_name)
+            if not file_id:
+                return False
+            self.drive_file_id = file_id
+            return drive_manager.download_file(file_id, str(self.path))
+        except Exception as exc:
+            logger.exception("Failed to restore project registry from Drive: %s", exc)
+            return False
+
     def update_env_vars(self, project_id: str, env_vars: Dict[str, str], drive_manager=None) -> Optional[ProjectRecord]:
         """Update environment variables for a project."""
         raw = self._load_raw()
@@ -86,6 +101,6 @@ class ProjectRegistry:
         raw["projects"][project_id] = project.to_dict()
         raw["drive_file_id"] = self.drive_file_id
         self.store.write(raw)
-        if drive_manager and drive_manager.service:
+        if drive_manager and drive_manager.service and not self.uses_mongo:
             self.backup_to_drive(drive_manager)
         return project

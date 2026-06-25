@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from models import RuntimeProjectState
 from storage.json_store import JsonStore
+from storage.mongo_store import MongoStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 class RuntimeStateStore:
     """Track desired running projects and mirror the state file to Drive."""
 
-    def __init__(self, path: str, drive_file_name: str = "runtime.json"):
+    def __init__(self, path: str, drive_file_name: str = "runtime.json", mongo_url: Optional[str] = None, mongo_database: str = "telegram_hosting_bot"):
         self.path = Path(path)
         self.drive_file_name = drive_file_name
-        self.store = JsonStore(path)
+        self.store = MongoStore(mongo_url, "runtime", mongo_database) if mongo_url else JsonStore(path)
         self.drive_file_id: Optional[str] = None
+        self.uses_mongo = bool(mongo_url)
 
     def load(self) -> Dict[str, RuntimeProjectState]:
         try:
@@ -40,7 +42,7 @@ class RuntimeStateStore:
             "running_projects": {key: value.to_dict() for key, value in running.items()},
         }
         self.store.write(data)
-        if drive_manager and drive_manager.service:
+        if drive_manager and drive_manager.service and not self.uses_mongo:
             self.backup_to_drive(drive_manager)
 
     def backup_to_drive(self, drive_manager) -> None:
@@ -55,6 +57,8 @@ class RuntimeStateStore:
             logger.exception("Failed to back up runtime state to Drive: %s", exc)
 
     def restore_from_drive(self, drive_manager) -> bool:
+        if self.uses_mongo:
+            return True
         try:
             file_id = self.drive_file_id or drive_manager.find_file_by_name(self.drive_file_name)
             if not file_id:

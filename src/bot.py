@@ -77,8 +77,8 @@ class ZEUSUptimeBot:
         self.throttler = Throttler(rate_limit=RATE_LIMIT_REQUESTS, period=RATE_LIMIT_PERIOD)
 
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        self.registry = ProjectRegistry(PROJECT_REGISTRY_FILE, PROJECT_REGISTRY_DRIVE_NAME)
-        self.runtime_store = RuntimeStateStore(RUNTIME_STATE_FILE, RUNTIME_STATE_DRIVE_NAME)
+        self.registry = ProjectRegistry(PROJECT_REGISTRY_FILE, PROJECT_REGISTRY_DRIVE_NAME, MONGODB_URL, MONGODB_DATABASE)
+        self.runtime_store = RuntimeStateStore(RUNTIME_STATE_FILE, RUNTIME_STATE_DRIVE_NAME, MONGODB_URL, MONGODB_DATABASE)
         self.log_store = ProjectLogStore(PROJECT_LOG_DIR)
         self.application: Optional[Application] = None
         self.project_manager = ProjectManager(
@@ -678,7 +678,34 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             bot.registry.save(project, manager)
             await query.edit_message_text(
                 f"✅ تم تعيين ملف التشغيل:\n`{entry_file}`\n\nيمكنك الآن تشغيل المشروع.",
-                parse_mode='Markdown',
+                reply_markup=project_action_keyboard(project_id),
+            )
+            return
+
+        # ---------- choose a Python dependency file interactively ----------
+        if kind == "deps":
+            if not await require_owner_cb(query):
+                return
+            project_id = parts[1]
+            choice = parts[2] if len(parts) > 2 else ""
+            project = bot.registry.get(project_id)
+            if not project:
+                await query.edit_message_text(t("project_not_found"))
+                return
+            if choice == "none":
+                project.dependency_file = None
+                bot.registry.save(project, manager)
+                await query.edit_message_text("✅ تم تعطيل تثبيت مكتبات Python لهذا المشروع.", reply_markup=project_action_keyboard(project_id))
+                return
+            idx = int(choice) if choice.isdigit() else -1
+            deps = DEPENDENCY_CANDIDATES.get(project_id, [])
+            if idx < 0 or idx >= len(deps):
+                await show_dependency_selector(query, project_id, manager, "⚠️ انتهت صلاحية قائمة ملفات المكتبات، اختر مرة أخرى.")
+                return
+            project.dependency_file = deps[idx]
+            bot.registry.save(project, manager)
+            await query.edit_message_text(
+                f"✅ تم تعيين ملف المكتبات:\n`{project.dependency_file}`\n\nسيتم تثبيته تلقائيًا قبل تشغيل المشروع.",
                 reply_markup=project_action_keyboard(project_id),
             )
             return
@@ -860,8 +887,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 context.user_data["awaiting_env_project_id"] = project_id
                 await query.edit_message_text(
                     "➕ أرسل المتغير الآن برسالة نصية بالشكل `KEY=VALUE`.\nمثال: `TOKEN=12345`\n\nملاحظة: يُحفظ في سجل المشروع ويُمرّر للعملية عند التشغيل، وليس متغيرًا عامًا دائمًا على نظام البوت.",
+<<<<<<< HEAD
                     parse_mode='Markdown',
                     reply_markup=project_action_keyboard(project_id),
+=======
+                        reply_markup=project_action_keyboard(project_id),
+>>>>>>> codex/fix-environment-variable-button-functionality
                 )
             elif action == "envdel":
                 key = parts[3] if len(parts) > 3 else ""
@@ -869,7 +900,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 if project and key in project.environment_vars:
                     project.environment_vars.pop(key, None)
                     bot.registry.save(project, manager)
+<<<<<<< HEAD
                 await query.edit_message_text(f"✅ تم حذف المتغير `{key}`.", parse_mode='Markdown', reply_markup=project_action_keyboard(project_id))
+=======
+                await query.edit_message_text(f"✅ تم حذف المتغير {key}.", reply_markup=project_action_keyboard(project_id))
+>>>>>>> codex/fix-environment-variable-button-functionality
             elif action == "env":
                 project = bot.registry.get(project_id)
                 if not project:
@@ -882,11 +917,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 rows.append([InlineKeyboardButton("➕ إضافة متغير", callback_data=f"act:envadd:{project_id}")])
                 rows.append([InlineKeyboardButton("↩️ العودة", callback_data=f"act:info:{project_id}")])
                 reply_markup = InlineKeyboardMarkup(rows)
-                var_list = "\n".join(f"{k}: `{v}`" for k, v in sorted(env_vars.items()))
+                var_list = "\n".join(f"{k}: {v}" for k, v in sorted(env_vars.items()))
                 await query.edit_message_text(
-                    f"**متغيرات بيئة المشروع {project.project_name}:**\n\n" +
+                    f"متغيرات بيئة المشروع {project.project_name}:\n\n" +
                     (var_list if var_list else "لا توجد متغيرات بعد."),
-                    parse_mode='Markdown',
                     reply_markup=reply_markup,
                 )
             elif action == "delete":
@@ -957,8 +991,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     project.environment_vars[key] = value
     bot.registry.save(project, manager)
     await update.message.reply_text(
+<<<<<<< HEAD
         f"✅ تم حفظ المتغير `{key}` للمشروع `{project.project_name}`. سيُطبّق عند التشغيل/إعادة التشغيل التالية.",
         parse_mode='Markdown',
+=======
+        f"✅ تم حفظ المتغير {key} للمشروع {project.project_name}. سيُطبّق عند التشغيل/إعادة التشغيل التالية.",
+>>>>>>> codex/fix-environment-variable-button-functionality
         reply_markup=project_action_keyboard(project_id),
     )
 
