@@ -95,19 +95,12 @@ class ProjectManager:
             return
         dependency_rel = self.validate_project_file(project_dir, dependency_rel)
         dependency_path = project_dir / dependency_rel
-<<<<<<< HEAD
-        if dependency_path.name == "requirements.txt":
-            install_command = [sys.executable, "-m", "pip", "install", "-r", str(dependency_path)]
-        elif dependency_path.name == "pyproject.toml":
-            install_command = [sys.executable, "-m", "pip", "install", str(dependency_path.parent)]
-=======
         packages_dir = project_dir / ".python_packages"
         packages_dir.mkdir(exist_ok=True)
         if dependency_path.name == "requirements.txt":
             install_command = [sys.executable, "-m", "pip", "install", "--upgrade", "--target", str(packages_dir), "-r", str(dependency_path)]
         elif dependency_path.name == "pyproject.toml":
             install_command = [sys.executable, "-m", "pip", "install", "--upgrade", "--target", str(packages_dir), str(dependency_path.parent)]
->>>>>>> codex/fix-environment-variable-button-functionality
         elif dependency_path.name == "Pipfile":
             install_command = [sys.executable, "-m", "pip", "install", "pipenv"]
         else:
