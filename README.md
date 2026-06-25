@@ -1,221 +1,393 @@
-# 🤖 WOWDrive Bot
+# dskpp (dsk++)
 
-A powerful Telegram bot that uploads files directly to Google Drive with support for large files, progress tracking, and comprehensive file management.
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Async](https://img.shields.io/badge/async-supported-green.svg)
+![License](https://img.shields.io/badge/license-Apache2.0-lightgrey.svg)
+![Status](https://img.shields.io/badge/status-experimental-orange.svg)
 
-## ✨ Features
+A lightweight async Python client for interacting with DeepSeek chat infrastructure through a local bypass + cookie + proof-of-work pipeline.
 
-- 📤 **File Upload**: Upload any file from Telegram to Google Drive
-- 🔄 **Chunked Upload**: Handle large files (>20MB) with progress tracking
-- 📊 **Real-time Progress**: Live progress updates every 20 seconds
-- 📁 **File Management**: List, rename, and delete files
-- 💾 **Storage Stats**: View your Google Drive storage usage
-- 🔐 **Secure Auth**: OAuth2 authentication with Google Drive
-- ⚡ **Queue System**: Handle multiple uploads efficiently
-- 🎯 **Smart Upload**: Direct upload for small files, chunked for large ones
+This project follows the same conceptual direction (and also contains elements from) as:
+- [https://github.com/xtekky/deepseek4free](https://github.com/xtekky/deepseek4free)
+- [https://github.com/Doremii109/deepseek4free-fix](https://github.com/Doremii109/deepseek4free-fix)
 
-## 🚀 Quick Start
+> [!WARNING]
+> This project is built around reverse-engineered infrastructure behavior. Use responsibly and be aware that API changes may break functionality without notice.
 
-### 1. Prerequisites
-
-- Python 3.8 or higher
-- Telegram Bot Token (from [@BotFather](https://t.me/botfather))
-- Google Cloud Project with Drive API enabled
-
-### 2. Installation
-
-```bash
-# Clone or download the project
-cd FPS
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run setup
-python setup.py
-```
-
-### 3. Configuration
-
-#### Telegram Bot Setup
-1. Message [@BotFather](https://t.me/botfather) on Telegram
-2. Create a new bot with `/newbot`
-3. Copy the bot token
-
-#### Google Drive API Setup
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable Google Drive API
-4. Create OAuth2 credentials (Desktop application)
-5. Download the `credentials.json` file
-
-#### Environment Configuration
-1. Edit `.env` file:
-   ```
-   BOT_TOKEN=your_telegram_bot_token_here
-   LOG_LEVEL=INFO
-   ```
-
-2. Replace `credentials.json` with your Google Cloud credentials
-
-### 4. Run the Bot
-
-```bash
-python run.py
-```
-
-## 📋 Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Start the bot and show welcome message |
-| `/help` | Show help message and available commands |
-| `/login` | Connect your Google Drive account |
-| `/stat` | Show your Drive storage usage |
-| `/list` | List your recent files |
-| `/rename <fileId> <newName>` | Rename a file in Drive |
-| `/remove <fileId>` | Delete a file from Drive |
-| `/privacy` | View privacy policy and terms |
-
-## 📤 Upload Process
-
-### Small Files (≤20MB)
-1. Send file to bot
-2. File is queued for upload
-3. Direct upload to Google Drive
-4. Completion notification with file ID
-
-### Large Files (>20MB)
-1. Send file to bot
-2. File is queued for upload
-3. Chunked upload with progress tracking
-4. Progress updates every 20 seconds
-5. Completion notification with file ID
-
-## 🔧 Configuration Options
-
-Edit `config.py` to customize:
-
-```python
-# File size limits
-MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
-
-# Upload settings
-CHUNK_SIZE = 1024 * 1024  # 1MB chunks
-PROGRESS_UPDATE_INTERVAL = 20  # seconds
-
-# Rate limiting
-RATE_LIMIT_REQUESTS = 10
-RATE_LIMIT_PERIOD = 60  # seconds
-```
-
-## 🏗️ Project Structure
-
-```
-FPS/
-├── bot.py                 # Main bot implementation
-├── config.py             # Configuration settings
-├── telegram_downloader.py # Telegram file downloader
-├── setup.py              # Setup script
-├── run.py                # Run script
-├── example_usage.py      # Example usage
-├── requirements.txt      # Python dependencies
-├── README.md            # This file
-├── .env                 # Environment variables (create this)
-├── credentials.json     # Google credentials (add this)
-└── uploads/            # Temporary upload folder
-```
-
-## 🔐 Security & Privacy
-
-- **OAuth2 Authentication**: Secure Google Drive access
-- **No Data Storage**: Files are uploaded directly to your Drive
-- **Token Management**: Credentials stored per user
-- **Revocable Access**: Revoke access anytime from Google Account
-- **Privacy First**: No file content stored on bot server
-
-## 🛠️ Development
-
-### Running Tests
-```bash
-python example_usage.py
-```
-
-### Adding Features
-1. Modify `bot.py` for new commands
-2. Update `config.py` for new settings
-3. Add handlers in the `main()` function
-
-### Debugging
-Set `LOG_LEVEL=DEBUG` in `.env` for detailed logs.
-
-## 🚨 Troubleshooting
-
-### Common Issues
-
-**Bot not responding:**
-- Check `BOT_TOKEN` in `.env`
-- Verify bot is running
-- Check logs for errors
-
-**Authentication failed:**
-- Verify `credentials.json` is correct
-- Check Google Drive API is enabled
-- Ensure redirect URI is `urn:ietf:wg:oauth:2.0:oob`
-
-**Upload fails:**
-- Check internet connection
-- Verify Google Drive storage space
-- Try smaller files first
-
-**File too large:**
-- Current limit is 2GB
-- Modify `MAX_FILE_SIZE` in `config.py`
-
-### Logs
-Check console output for detailed error messages and debugging information.
-
-## 📊 File Size Limits
-
-| File Type | Limit | Upload Method |
-|-----------|-------|---------------|
-| Small files | ≤20MB | Direct upload |
-| Large files | >20MB | Chunked upload |
-| Maximum | 2GB | Chunked upload |
-
-## 🔄 Upload Queue
-
-The bot uses a queue system to handle multiple uploads:
-- Files are processed in order
-- Progress tracking for each upload
-- Cancel option during upload
-- Error handling and retry logic
-
-## 📈 Performance
-
-- **Concurrent Uploads**: One per user
-- **Rate Limiting**: 10 requests per minute
-- **Chunk Size**: 1MB for optimal performance
-- **Progress Updates**: Every 20 seconds
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## 📄 License
-
-This project is open source. Please use responsibly and in accordance with Google Drive Terms of Service.
-
-## 🆘 Support
-
-For issues and questions:
-1. Check the troubleshooting section
-2. Review the logs
-3. Contact the bot administrator
+> [!IMPORTANT]
+> Cookie generation is required before using the API client. Run `python run_and_get_cookies.py` first — the client will not work without valid cookies.
 
 ---
 
-**Made with ❤️ for seamless file management**
+## overview
+
+dsk++ provides:
+
+* async DeepSeek chat client
+* streaming response support with dual format parsing
+* session-based conversation handling
+* automated cookie acquisition system
+* local Cloudflare bypass server
+* WASM-based proof-of-work solver with async thread pool
+* concurrent file upload support using asyncio.gather()
+* automatic Cloudflare detection and cookie refresh
+
+---
+
+## installation
+
+### clone repo
+
+> [!CAUTION]
+> Do not cd (change directory) into it, you'll import it like dskpp.api!
+
+```bash
+git clone https://github.com/fundiman/dskpp
+```
+
+### install dependencies
+
+> [!NOTE]
+> The `requirements.txt` file was generated with `pipreqs`.
+
+```bash
+pip install -r requirements.txt
+```
+
+**System dependencies (Linux / server environments):**
+
+* google-chrome or chromium
+* xvfb (for headless fallback)
+* python 3.10+
+
+---
+
+## quick start
+
+> [!IMPORTANT]
+> Before using the API client, cookies must be generated:
+
+```bash
+python run_and_get_cookies.py
+```
+
+This will:
+
+* start local bypass server
+* launch Chromium automation
+* solve Cloudflare challenges
+* store cookies in `dsk/dsk/cookies.json`
+
+> [!NOTE]
+> The bypass server runs locally on port 8021 by default. Ensure this port is available.
+
+---
+
+## project structure
+
+```
+dskpp/
+│
+├── api.py                     # async DeepSeek API client
+├── server.py                 # FastAPI bypass + cookie server
+├── CloudflareBypasser.py     # Chromium-based challenge solver
+├── bypass.py                 # automation helper logic
+├── pow.py                   # WASM proof-of-work solver (async)
+├── run_and_get_cookies.py   # bootstrap cookie acquisition
+│
+├── dsk/                     # runtime cookie storage
+├── wasm/                    # WASM binaries for hashing
+└── README.md
+```
+
+---
+
+## usage
+
+### initialize client
+
+```python
+from dskpp.api import DeepSeekAPI
+import asyncio
+
+api = DeepSeekAPI(auth_token="your_token")
+```
+
+> [!NOTE]
+> The auth token is obtained after logging into DeepSeek chat. Extract it from browser developer tools (Application → Local Storage → chat.deepseek.com → USER_TOKEN).
+
+---
+
+### create chat session
+
+```python
+session_id = await api.create_chat_session()
+```
+
+---
+
+### delete chat session
+
+```python
+result = await api.delete_chat_session(session_id)
+print(result)  # "Successfully deleted session: session_id"
+```
+
+---
+
+### file upload (concurrent multiple files)
+
+```python
+# Upload multiple files concurrently
+file_ids = await api.upload_files([
+    "document.pdf",
+    "image.png",
+    "data.csv"
+])
+
+# file_ids returned in same order as input
+print(file_ids)  # ['file_id_1', 'file_id_2', 'file_id_3']
+```
+
+> [!NOTE]
+> The system uploads all files simultaneously using `asyncio.gather()` for maximum efficiency.
+
+---
+
+### streaming chat with file references
+
+```python
+async for chunk in api.chat_completion(
+    chat_session_id=session_id,
+    prompt="Analyze these uploaded files",
+    ref_file_ids=file_ids,  # List of file IDs from upload
+    thinking_enabled=True,
+    search_enabled=False  # Must be False when using files
+):
+    # chunk is a dictionary with 'content' key
+    print(chunk.get("content", ""), end="")
+```
+
+> [!WARNING]
+> File uploads require `search_enabled=False`. Attempting to use both will raise `UploadFilesUnavailable`.
+
+---
+
+### chat with search
+
+```python
+async for chunk in api.chat_completion(
+    chat_session_id=session_id,
+    prompt="What's the latest news about AI?",
+    thinking_enabled=True,
+    search_enabled=True  # Enables web search for current info
+):
+    print(chunk.get("content", ""), end="")
+```
+
+---
+
+### streaming response format
+
+The client parses DeepSeek's SSE format and returns dictionaries:
+
+```python
+{
+    'type': 'text',           # Type of chunk (text, message_ids, etc.)
+    'content': 'incremental text...',  # The actual content
+    'finish_reason': None     # 'stop' when complete, None otherwise
+}
+```
+
+> [!NOTE]
+> The parser automatically handles both full format (with 'p' and 'o' fields) and simplified format (just 'v' field) chunks.
+
+---
+
+### non-streaming usage (aggregated)
+
+A fully buffered response can be constructed manually:
+
+```python
+response = ""
+
+async for chunk in api.chat_completion(
+    chat_session_id=session_id,
+    prompt="Hello world"
+):
+    response += chunk.get("content", "")
+```
+
+---
+
+### conversation history
+
+```python
+history = await api.get_history(session_id)
+print(history)
+```
+
+---
+
+### cleanup
+
+> [!IMPORTANT]
+> Always close the session when done to free resources:
+
+```python
+await api.close()
+```
+
+---
+
+## server mode
+
+Run bypass server manually:
+
+```bash
+python server.py
+```
+
+Default endpoint:
+
+```
+http://localhost:8021
+```
+
+Endpoints:
+
+* `/cookies` → returns validated cookies + user-agent
+* `/html` → returns raw HTML + cookies header metadata
+
+---
+
+## docker mode
+
+Enable Docker compatibility:
+
+```bash
+export DOCKERMODE=true
+```
+
+This enables:
+
+* headless Chromium adjustments
+* sandbox flags
+* remote debugging port support
+
+> [!NOTE]
+> Set `DOCKERMODE=true` when running inside containers to avoid sandbox-related crashes.
+
+---
+
+## architecture
+
+The system is composed of three core layers:
+
+### 1. API layer (`api.py`)
+
+Async client for session-based chat interaction with:
+- concurrent file uploads using asyncio.gather()
+- streaming response parsing for DeepSeek SSE format
+- automatic retry logic with Cloudflare detection and cookie refresh
+- async session management with curl_cffi
+
+### 2. bypass layer (`server.py`)
+
+FastAPI + Chromium automation for:
+
+* Cloudflare bypass
+* cookie extraction
+* page validation
+
+### 3. PoW layer (`pow.py`)
+
+WebAssembly-based solver with async wrapper using asyncio.to_thread() to keep event loop responsive during CPU-bound computations.
+
+---
+
+## async design notes
+
+The system is designed around non-blocking execution:
+
+* network I/O uses async HTTP sessions from curl_cffi
+* streaming responses use async generators that yield control between chunks
+* blocking WASM computations are offloaded to threads via asyncio.to_thread()
+* browser automation runs in separate processes
+* cookie acquisition runs outside event loop control path
+* concurrent file uploads using asyncio.gather()
+* colored warning outputs for better visibility
+
+---
+
+## error handling
+
+The client provides specific exceptions for different failure modes:
+
+```python
+from dskpp.api import (
+    AuthenticationError,    # Invalid/expired token
+    RateLimitError,         # API rate limit exceeded
+    NetworkError,           # Network communication failure
+    CloudflareError,        # Cloudflare block detected
+    UploadFilesUnavailable, # Search enabled during file upload
+    APIError               # Generic API error with status code
+)
+```
+
+---
+
+## example: full flow with file upload
+
+```python
+import asyncio
+from dskpp.api import DeepSeekAPI
+
+async def main():
+    api = DeepSeekAPI("your_token_here")
+
+    # Create session
+    session = await api.create_chat_session()
+    print(f"Session created: {session}")
+
+    # Upload files concurrently
+    file_ids = await api.upload_files([
+        "report.pdf",
+        "data.xlsx"
+    ])
+    print(f"Uploaded files: {file_ids}")
+
+    # Chat with file context
+    async for chunk in api.chat_completion(
+        session,
+        "Analyze these files and summarize key points",
+        ref_file_ids=file_ids,
+        search_enabled=False  # Required for file uploads
+    ):
+        print(chunk.get("content", ""), end="")
+
+    # Cleanup
+    await api.delete_chat_session(session)
+    await api.close()
+
+asyncio.run(main())
+```
+
+---
+
+## notes
+
+> [!CAUTION]
+> This project is experimental and based on reverse-engineered behavior of DeepSeek's infrastructure. DeepSeek may modify their API at any time, which could break this client — while efforts will be made to address issues, full compatibility cannot be guaranteed. Use of this client may also violate DeepSeek's terms of service and could result in account suspension or banning. Please use at your own risk.
+
+> [!TIP]
+> If you encounter Cloudflare blocks, try deleting `dsk/dsk/cookies.json` and re-running `python run_and_get_cookies.py` to refresh your cookies.
+
+> [!NOTE]
+> The client automatically handles both SSE event lines and data lines, parsing the simplified chunk format (just 'v' field) that appears after the first response chunk.
+
+---
+
+## license
+
+This project is licensed under [Apache 2.0](LICENSE).
