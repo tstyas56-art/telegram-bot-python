@@ -8,3 +8,4 @@ aiofiles
 asyncio-throttle
 flask
 aiohttp
+pymongo
