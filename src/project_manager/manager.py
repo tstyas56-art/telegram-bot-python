@@ -55,20 +55,59 @@ class ProjectManager:
         archive_path.unlink(missing_ok=True)
         return project_dir
 
-    async def install_requirements(self, project_id: str, project_dir: Path) -> None:
-        requirements = project_dir / "requirements.txt"
-        if not requirements.exists():
+    def validate_project_file(self, project_dir: Path, file_path: str) -> str:
+        selected = Path(file_path)
+        if selected.is_absolute() or ".." in selected.parts:
+            raise ValueError("المسار غير آمن أو خارج مجلد المشروع")
+        target = (project_dir / selected).resolve()
+        if not str(target).startswith(str(project_dir.resolve())) or not target.is_file():
+            raise ValueError("الملف غير موجود داخل مجلد المشروع")
+        return str(selected).replace(os.sep, "/")
+
+    def _detect_dependency_file(self, project_dir: Path, entry_file: Optional[str] = None) -> Optional[str]:
+        names = ["requirements.txt", "pyproject.toml", "Pipfile"]
+        search_roots = []
+        if entry_file:
+            entry_path = (project_dir / entry_file).resolve()
+            if entry_path.exists():
+                current = entry_path.parent
+                while str(current).startswith(str(project_dir.resolve())):
+                    search_roots.append(current)
+                    if current == project_dir.resolve():
+                        break
+                    current = current.parent
+        search_roots.append(project_dir.resolve())
+        for root in search_roots:
+            for name in names:
+                candidate = root / name
+                if candidate.is_file():
+                    return str(candidate.relative_to(project_dir.resolve())).replace(os.sep, "/")
+        for path in project_dir.rglob("*"):
+            if path.is_file() and path.name in names:
+                rel = path.relative_to(project_dir)
+                if not any(part in {".git", "venv", ".venv", "env", "node_modules", "__pycache__"} for part in rel.parts):
+                    return str(rel).replace(os.sep, "/")
+        return None
+
+    async def install_requirements(self, project_id: str, project_dir: Path, dependency_file: Optional[str] = None) -> None:
+        dependency_rel = dependency_file or self._detect_dependency_file(project_dir)
+        if not dependency_rel:
+            return
+        dependency_rel = self.validate_project_file(project_dir, dependency_rel)
+        dependency_path = project_dir / dependency_rel
+        if dependency_path.name == "requirements.txt":
+            install_command = [sys.executable, "-m", "pip", "install", "-r", str(dependency_path)]
+        elif dependency_path.name == "pyproject.toml":
+            install_command = [sys.executable, "-m", "pip", "install", str(dependency_path.parent)]
+        elif dependency_path.name == "Pipfile":
+            install_command = [sys.executable, "-m", "pip", "install", "pipenv"]
+        else:
             return
         log_path = self.log_store.path_for(project_id)
         with log_path.open("ab", buffering=0) as log_file:
-            log_file.write(b"\n--- Installing requirements.txt ---\n")
+            log_file.write(f"\n--- Installing Python dependencies from {dependency_rel} ---\n".encode())
             process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                str(requirements),
+                *install_command,
                 cwd=str(project_dir),
                 stdout=log_file,
                 stderr=asyncio.subprocess.STDOUT,
@@ -105,10 +144,7 @@ class ProjectManager:
         entry = Path(entry_file)
         if entry.is_absolute() or ".." in entry.parts:
             raise ValueError("ملف التشغيل غير آمن أو خارج مجلد المشروع")
-        target = (project_dir / entry).resolve()
-        if not str(target).startswith(str(project_dir.resolve())) or not target.is_file():
-            raise ValueError("ملف التشغيل غير موجود داخل مجلد المشروع")
-        return str(entry)
+        return self.validate_project_file(project_dir, entry_file)
     async def start_project(
         self,
         project_id: str,
@@ -132,7 +168,11 @@ class ProjectManager:
             safe_entry = self.validate_entry_file(project_dir, entry_file)
             project.main_entry_file = safe_entry
             project.startup_command = ["python", safe_entry]
-        await self.install_requirements(project_id, project_dir)
+            if not project.dependency_file:
+                project.dependency_file = self._detect_dependency_file(project_dir, safe_entry)
+        if not project.dependency_file:
+            project.dependency_file = self._detect_dependency_file(project_dir, project.main_entry_file)
+        await self.install_requirements(project_id, project_dir, project.dependency_file)
         await self.install_dependencies(project_id, project_dir)
         log_path = self.log_store.path_for(project_id)
         log_file = log_path.open("ab", buffering=0)

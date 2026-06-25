@@ -32,6 +32,7 @@ class ProjectRecord:
     auto_restart: bool = False
     startup_command: Optional[List[str]] = None
     environment_vars: Dict[str, str] = field(default_factory=dict)
+    dependency_file: Optional[str] = None
     versions: List[ProjectVersion] = field(default_factory=list)
 
     @classmethod

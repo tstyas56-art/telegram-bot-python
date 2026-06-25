@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 PROJECTS_PER_PAGE = 6
 DESTRUCTIVE_ACTIONS = {"stop_all", "restart_all", "delete", "delete_drive"}
 ENTRY_CANDIDATES: Dict[str, List[str]] = {}
+DEPENDENCY_CANDIDATES: Dict[str, List[str]] = {}
 
 
 @dataclass
@@ -217,6 +218,7 @@ class ZEUSUptimeBot:
                 "project_type": "single_python_file",
                 "main_entry_file": safe_name,
                 "startup_command": ["python", safe_name],
+                "dependency_file": None,
             }
             return self._save_project_record(user_id, archive_path, f"{Path(safe_name).stem}.zip", detected)
         finally:
@@ -243,6 +245,7 @@ class ZEUSUptimeBot:
             existing.project_type = detected["project_type"] or "unknown"
             existing.main_entry_file = detected["main_entry_file"]
             existing.startup_command = detected["startup_command"]
+            existing.dependency_file = detected.get("dependency_file")
             self.registry.save(existing, manager)
             return existing
 
@@ -254,6 +257,7 @@ class ZEUSUptimeBot:
             upload_date=utc_now_iso(),
             main_entry_file=detected["main_entry_file"],
             startup_command=detected["startup_command"],
+            dependency_file=detected.get("dependency_file"),
         )
         self.registry.save(project, manager)
         return project
@@ -354,7 +358,8 @@ def project_action_keyboard(project_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("▶️ تشغيل", callback_data=f"act:start:{project_id}"),
          InlineKeyboardButton("⏹️ إيقاف", callback_data=f"act:stop:{project_id}")],
         [InlineKeyboardButton("🎯 اختيار ملف التشغيل", callback_data=f"act:choose_entry:{project_id}"),
-         InlineKeyboardButton("⚙️ متغيرات البيئة", callback_data=f"act:env:{project_id}")],
+         InlineKeyboardButton("📦 ملف المكتبات", callback_data=f"act:choose_deps:{project_id}")],
+        [InlineKeyboardButton("⚙️ متغيرات البيئة", callback_data=f"act:env:{project_id}")],
         [InlineKeyboardButton("🔁 إعادة تشغيل", callback_data=f"act:restart:{project_id}")],
         [InlineKeyboardButton("ℹ️ معلومات", callback_data=f"act:info:{project_id}"),
          InlineKeyboardButton("📜 السجلات", callback_data=f"act:logs:{project_id}")],
@@ -410,6 +415,52 @@ async def show_entry_selector(query, project_id: str, manager, message_prefix: s
     text = (message_prefix + "\n\n" if message_prefix else "") + "🎯 اختر ملف التشغيل من القائمة التالية:"
     await query.edit_message_text(text, reply_markup=entry_selection_keyboard(project_id, entries))
 
+
+
+def dependency_file_candidates(project_dir: Path) -> List[str]:
+    """Return likely Python dependency manifest files inside an extracted project."""
+    ignored_dirs = {".git", "__pycache__", "venv", ".venv", "env", "node_modules", "site-packages"}
+    names = {"requirements.txt", "pyproject.toml", "Pipfile"}
+    candidates = []
+    for path in project_dir.rglob("*"):
+        rel = path.relative_to(project_dir)
+        if path.is_file() and path.name in names and not any(part in ignored_dirs for part in rel.parts):
+            candidates.append(str(rel).replace(os.sep, "/"))
+    candidates.sort(key=lambda x: (Path(x).name != "requirements.txt", len(Path(x).parts), x.lower()))
+    return candidates[:40]
+
+
+def dependency_selection_keyboard(project_id: str, deps: List[str]) -> InlineKeyboardMarkup:
+    rows = []
+    for idx, dep in enumerate(deps[:30]):
+        label = dep if len(dep) <= 45 else "…" + dep[-44:]
+        rows.append([InlineKeyboardButton(f"📦 {label}", callback_data=f"deps:{project_id}:{idx}")])
+    rows.append([InlineKeyboardButton("🧹 بدون تثبيت مكتبات", callback_data=f"deps:{project_id}:none")])
+    rows.append([InlineKeyboardButton("⬅️ رجوع للمشروع", callback_data=f"proj:{project_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_dependency_selector(query, project_id: str, manager, message_prefix: str = "") -> None:
+    project = bot.registry.get(project_id)
+    if not project:
+        await query.edit_message_text(t("project_not_found"))
+        return
+    try:
+        project_dir = await bot.project_manager.ensure_project_files(project, manager)
+        deps = dependency_file_candidates(project_dir)
+    except Exception as exc:
+        logger.exception("Failed to prepare dependency selector")
+        await query.edit_message_text(t("operation_failed", error=exc), reply_markup=project_action_keyboard(project_id))
+        return
+    if not deps:
+        await query.edit_message_text(
+            "⚠️ لم أجد requirements.txt أو pyproject.toml أو Pipfile داخل المشروع. يمكنك رفع ZIP يحتوي ملف المكتبات أو تشغيل المشروع بدون تثبيت.",
+            reply_markup=dependency_selection_keyboard(project_id, []),
+        )
+        return
+    DEPENDENCY_CANDIDATES[project_id] = deps
+    text = (message_prefix + "\n\n" if message_prefix else "") + "📦 اختر ملف تنزيل المكتبات الذي سيستخدمه pip قبل التشغيل:"
+    await query.edit_message_text(text, reply_markup=dependency_selection_keyboard(project_id, deps))
 
 def confirm_keyboard(action: str, project_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -600,7 +651,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 return
             await query.edit_message_text(
                 t("project_info", name=project.project_name, id=project.project_id, type=project.project_type,
-                  entry=project.main_entry_file, status=project.status, auto_restart=project.auto_restart,
+                  entry=project.main_entry_file or "غير محدد", dependency=project.dependency_file or "تلقائي/غير محدد",
+                  env_count=len(project.environment_vars or {}), status=project.status, auto_restart=project.auto_restart,
                   drive_file_id=project.drive_file_id),
                 reply_markup=project_action_keyboard(project.project_id),
             )
@@ -626,6 +678,35 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             bot.registry.save(project, manager)
             await query.edit_message_text(
                 f"✅ تم تعيين ملف التشغيل:\n`{entry_file}`\n\nيمكنك الآن تشغيل المشروع.",
+                parse_mode='Markdown',
+                reply_markup=project_action_keyboard(project_id),
+            )
+            return
+
+        # ---------- choose a Python dependency file interactively ----------
+        if kind == "deps":
+            if not await require_owner_cb(query):
+                return
+            project_id = parts[1]
+            choice = parts[2] if len(parts) > 2 else ""
+            project = bot.registry.get(project_id)
+            if not project:
+                await query.edit_message_text(t("project_not_found"))
+                return
+            if choice == "none":
+                project.dependency_file = None
+                bot.registry.save(project, manager)
+                await query.edit_message_text("✅ تم تعطيل تثبيت مكتبات Python لهذا المشروع.", reply_markup=project_action_keyboard(project_id))
+                return
+            idx = int(choice) if choice.isdigit() else -1
+            deps = DEPENDENCY_CANDIDATES.get(project_id, [])
+            if idx < 0 or idx >= len(deps):
+                await show_dependency_selector(query, project_id, manager, "⚠️ انتهت صلاحية قائمة ملفات المكتبات، اختر مرة أخرى.")
+                return
+            project.dependency_file = deps[idx]
+            bot.registry.save(project, manager)
+            await query.edit_message_text(
+                f"✅ تم تعيين ملف المكتبات:\n`{project.dependency_file}`\n\nسيتم تثبيته تلقائيًا قبل تشغيل المشروع.",
                 parse_mode='Markdown',
                 reply_markup=project_action_keyboard(project_id),
             )
@@ -728,6 +809,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             elif action == "choose_entry":
                 await show_entry_selector(query, project_id, manager)
 
+            elif action == "choose_deps":
+                await show_dependency_selector(query, project_id, manager)
+
             elif action == "start":
                 project = bot.registry.get(project_id)
                 if project and not project.startup_command:
@@ -764,13 +848,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     return
                 await query.edit_message_text(
                     t("project_info", name=project.project_name, id=project.project_id, type=project.project_type,
-                      entry=project.main_entry_file, status=project.status, auto_restart=project.auto_restart,
+                      entry=project.main_entry_file or "غير محدد", dependency=project.dependency_file or "تلقائي/غير محدد",
+                      env_count=len(project.environment_vars or {}), status=project.status, auto_restart=project.auto_restart,
                       drive_file_id=project.drive_file_id),
                     reply_markup=project_action_keyboard(project_id),
                 )
             elif action == "logs":
                 text = bot.log_store.tail(project_id, 100)
                 await query.edit_message_text(f"```\n{text[-3500:]}\n```", reply_markup=project_action_keyboard(project_id))
+            elif action == "envadd":
+                context.user_data["awaiting_env_project_id"] = project_id
+                await query.edit_message_text(
+                    "➕ أرسل المتغير الآن برسالة نصية بالشكل `KEY=VALUE`.\nمثال: `TOKEN=12345`\n\nملاحظة: يُحفظ في سجل المشروع ويُمرّر للعملية عند التشغيل، وليس متغيرًا عامًا دائمًا على نظام البوت.",
+                    parse_mode='Markdown',
+                    reply_markup=project_action_keyboard(project_id),
+                )
+            elif action == "envdel":
+                key = parts[3] if len(parts) > 3 else ""
+                project = bot.registry.get(project_id)
+                if project and key in project.environment_vars:
+                    project.environment_vars.pop(key, None)
+                    bot.registry.save(project, manager)
+                await query.edit_message_text(f"✅ تم حذف المتغير `{key}`.", parse_mode='Markdown', reply_markup=project_action_keyboard(project_id))
             elif action == "env":
                 project = bot.registry.get(project_id)
                 if not project:
@@ -832,6 +931,37 @@ async def post_init_recovery(application: Application):
     logger.info("الاستعادة التلقائية شغّلت %s مشروع/مشاريع", recovered)
 
 
+
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle one-shot text prompts such as adding project environment variables."""
+    if not await require_owner(update):
+        return
+    project_id = context.user_data.pop("awaiting_env_project_id", None)
+    if not project_id:
+        return
+    text = (update.message.text or "").strip()
+    if "=" not in text:
+        await update.message.reply_text("❌ الصيغة غير صحيحة. أعد الضغط على إضافة متغير وأرسلها بالشكل KEY=VALUE.")
+        return
+    key, value = text.split("=", 1)
+    key = key.strip()
+    value = value.strip()
+    if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+        await update.message.reply_text("❌ اسم المتغير غير صالح. استخدم حروفًا وأرقامًا وشرطة سفلية فقط، ولا يبدأ برقم.")
+        return
+    project = bot.registry.get(project_id)
+    if not project:
+        await update.message.reply_text(t("project_not_found"))
+        return
+    manager = bot.get_drive_manager(update.effective_user.id)
+    project.environment_vars[key] = value
+    bot.registry.save(project, manager)
+    await update.message.reply_text(
+        f"✅ تم حفظ المتغير `{key}` للمشروع `{project.project_name}`. سيُطبّق عند التشغيل/إعادة التشغيل التالية.",
+        parse_mode='Markdown',
+        reply_markup=project_action_keyboard(project_id),
+    )
+
 def start_bot():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN غير موجود في متغيرات البيئة")
@@ -848,6 +978,7 @@ def start_bot():
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_error_handler(error_handler)

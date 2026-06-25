@@ -58,13 +58,13 @@ TEXT = {
 }
 
 TEXT.update({
-    "project_info": "ℹ️ **{name}**\nالمعرّف: `{id}`\nالنوع: {type}\nملف التشغيل: `{entry}`\nالحالة: {status}\nإعادة التشغيل التلقائي: {auto_restart}\nملف Drive: `{drive_file_id}`",
+    "project_info": "ℹ️ **{name}**\nالمعرّف: `{id}`\nالنوع: {type}\nملف التشغيل: `{entry}`\nملف المكتبات: `{dependency}`\nمتغيرات البيئة: {env_count}\nالحالة: {status}\nإعادة التشغيل التلقائي: {auto_restart}\nملف Drive: `{drive_file_id}`",
     "drive_download_failed": "تعذر تنزيل المشروع {name} من Google Drive. ربما تم حذف الملف يدويًا.",
     "requirements_failed": "فشل تثبيت المتطلبات. راجع /logs لمعرفة تفاصيل pip.",
     "already_running": "المشروع يعمل بالفعل.",
     "max_running_reached": "تم الوصول إلى الحد الأقصى للمشاريع المشغلة ({limit}).",
     "manager_project_not_found": "المشروع غير موجود",
-    "no_startup_command": "لا يوجد أمر تشغيل مكتشف للمشروع. استخدم /start_project <id> <entry.py>",
+    "no_startup_command": "لا يوجد أمر تشغيل مكتشف للمشروع. استخدم زر اختيار ملف التشغيل.",
     "manager_started": "تم تشغيل المشروع PID={pid}",
     "manager_stopped": "تم إيقاف المشروع.",
     "unknown": "غير معروف",
