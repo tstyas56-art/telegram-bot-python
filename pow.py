@@ -15,8 +15,6 @@ import numpy as np
 from typing import Dict, Any
 import os
 import asyncio
-import hashlib
-import hmac
 
 
 WASM_PATH = f'{os.path.dirname(__file__)}/wasm/sha3_wasm_bg.7b9ca65ddd.wasm'
@@ -68,9 +66,8 @@ class DeepSeekHash:
         difficulty: int,
         expire_at: int
     ) -> float:
-        # استخدام الصيغة الصحيحة: challenge + salt + nonce
-        # لذلك نرسل prefix = salt فقط بدون expire_at
-        prefix = salt
+
+        prefix = f"{salt}_{expire_at}_"
         retptr = self.instance.exports(self.store)["__wbindgen_add_to_stack_pointer"](
             self.store, -16
         )
@@ -115,13 +112,6 @@ class DeepSeekPOW:
     def __init__(self):
         pass
 
-    @staticmethod
-    def _compute_signature(challenge: str, salt: str, answer: int, target_path: str) -> str:
-        """حساب التوقيع المطلوب من قبل واجهة DeepSeek API"""
-        message = f"{challenge}{salt}{answer}{target_path}"
-        secret = b"deepseek"
-        return hmac.new(secret, message.encode(), hashlib.sha256).hexdigest()
-
     async def solve_challenge(self, config: Dict[str, Any]) -> str:
         """
         Async wrapper around CPU-bound WASM computation
@@ -138,25 +128,17 @@ class DeepSeekPOW:
                 config['expire_at']
             )
 
-            # حساب التوقيع بناءً على القيم الفعلية
-            signature = self._compute_signature(
-                challenge=config['challenge'],
-                salt=config['salt'],
-                answer=answer,
-                target_path=config['target_path']
-            )
-
             result = {
                 'algorithm': config['algorithm'],
                 'challenge': config['challenge'],
                 'salt': config['salt'],
                 'answer': answer,
-                'signature': signature,
+                'signature': config['signature'],
                 'target_path': config['target_path']
             }
 
             return base64.b64encode(
-                json.dumps(result).encode()
+                json.dumps(result, separators=(',', ':')).encode()
             ).decode()
 
         # Run CPU-heavy WASM work in thread so async loop stays alive
