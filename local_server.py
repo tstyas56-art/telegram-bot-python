@@ -112,14 +112,22 @@ async def get_pow():
     """
     يُعيد استجابة PoW كاملة.
 
-    pow_response هي القيمة الجاهزة لوضعها في ترويسة x-ds-pow-response،
-    وبقية الحقول مفكوكة لتطبيقات الواجهة التي تتحقق من اكتمال الاستجابة.
+    x_ds_pow_response هي القيمة الجاهزة لوضعها في ترويسة x-ds-pow-response،
+    و solved_json يطابق شكل خوادم PoW الخارجية التي تعتمد عليها بعض الواجهات.
     """
     try:
         challenge = await client._get_pow_challenge()
         pow_response = await pow_solver.solve_challenge(challenge)
-        payload = _decode_pow_response(pow_response)
-        return {"pow_response": pow_response, **payload}
+        solved_json = _decode_pow_response(pow_response)
+        return {
+            "success": True,
+            "header_name": "X-DS-PoW-Response",
+            "x_ds_pow_response": pow_response,
+            "solved_json": solved_json,
+            # Backward-compatible aliases for older clients.
+            "pow_response": pow_response,
+            **solved_json,
+        }
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
