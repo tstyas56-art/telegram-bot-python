@@ -15,6 +15,8 @@ import numpy as np
 from typing import Dict, Any
 import os
 import asyncio
+import hashlib
+import hmac
 
 
 WASM_PATH = f'{os.path.dirname(__file__)}/wasm/sha3_wasm_bg.7b9ca65ddd.wasm'
@@ -112,6 +114,13 @@ class DeepSeekPOW:
     def __init__(self):
         pass
 
+    @staticmethod
+    def _compute_signature(challenge: str, salt: str, answer: int, target_path: str) -> str:
+        """حساب التوقيع المطلوب من قبل واجهة DeepSeek API"""
+        message = f"{challenge}{salt}{answer}{target_path}"
+        secret = b"deepseek"
+        return hmac.new(secret, message.encode(), hashlib.sha256).hexdigest()
+
     async def solve_challenge(self, config: Dict[str, Any]) -> str:
         """
         Async wrapper around CPU-bound WASM computation
@@ -128,12 +137,20 @@ class DeepSeekPOW:
                 config['expire_at']
             )
 
+            # حساب التوقيع بناءً على القيم الفعلية
+            signature = self._compute_signature(
+                challenge=config['challenge'],
+                salt=config['salt'],
+                answer=answer,
+                target_path=config['target_path']
+            )
+
             result = {
                 'algorithm': config['algorithm'],
                 'challenge': config['challenge'],
                 'salt': config['salt'],
                 'answer': answer,
-                'signature': config['signature'],
+                'signature': signature,
                 'target_path': config['target_path']
             }
 
