@@ -85,10 +85,12 @@ class DeepSeekAPI:
             'origin': 'https://chat.deepseek.com',
             'referer': 'https://chat.deepseek.com/',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-            'x-app-version': '20241129.1',
+            'x-app-version': '2.0.0',
+            'x-client-bundle-id': 'com.deepseek.chat',
             'x-client-locale': 'en_US',
             'x-client-platform': 'web',
-            'x-client-version': '1.0.0-always',
+            'x-client-timezone-offset': '10800',
+            'x-client-version': '2.0.0',
         }
 
         if pow_response:
@@ -243,10 +245,12 @@ class DeepSeekAPI:
             'origin': 'https://chat.deepseek.com',
             'referer': 'https://chat.deepseek.com/',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-            'x-app-version': '20241129.1',
+            'x-app-version': '2.0.0',
+            'x-client-bundle-id': 'com.deepseek.chat',
             'x-client-locale': 'en_US',
             'x-client-platform': 'web',
-            'x-client-version': '1.0.0-always',
+            'x-client-timezone-offset': '10800',
+            'x-client-version': '2.0.0',
             'x-ds-pow-response': pow_response,
         }
         
@@ -349,10 +353,13 @@ class DeepSeekAPI:
         json_data = {
             'chat_session_id': chat_session_id,
             'parent_message_id': self.last_message_id.get(chat_session_id) or parent_message_id,
+            'model_type': 'default',
             'prompt': prompt,
             'ref_file_ids': ref_file_ids if ref_file_ids else [],
             'thinking_enabled': thinking_enabled,
             'search_enabled': search_enabled,
+            'action': None,
+            'preempt': False,
         }
 
         # Get challenge and solve it
@@ -462,7 +469,7 @@ class DeepSeekAPI:
                 }
             
             # Handle full DeepSeek format with 'p' and 'v' fields
-            if 'v' in data and data.get('p') == 'response/content' and data.get('o') == 'APPEND':
+            if 'v' in data and data.get('p') in {'response/content', 'response/fragments/-1/content'} and data.get('o') == 'APPEND':
                 v_value = data.get('v', '')
                 if isinstance(v_value, dict):
                     return None

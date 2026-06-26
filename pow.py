@@ -138,7 +138,7 @@ class DeepSeekPOW:
             }
 
             return base64.b64encode(
-                json.dumps(result).encode()
+                json.dumps(result, separators=(',', ':')).encode()
             ).decode()
 
         # Run CPU-heavy WASM work in thread so async loop stays alive
