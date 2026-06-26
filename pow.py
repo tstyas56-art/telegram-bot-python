@@ -68,18 +68,47 @@ class DeepSeekHash:
         difficulty: int,
         expire_at: int
     ) -> float:
-        """
-        البحث عن nonce (answer) بحيث:
-        sha3_256(challenge + salt + str(nonce)) يبدأ بـ difficulty من الأصفار
-        """
-        target = '0' * difficulty
-        nonce = 0
-        while True:
-            data = f"{challenge}{salt}{nonce}".encode()
-            h = hashlib.sha3_256(data).hexdigest()
-            if h.startswith(target):
-                return float(nonce)   # ترجع float لأن الدالة الأصلية ترجع float
-            nonce += 1
+        # استخدام الصيغة الصحيحة: challenge + salt + nonce
+        # لذلك نرسل prefix = salt فقط بدون expire_at
+        prefix = salt
+        retptr = self.instance.exports(self.store)["__wbindgen_add_to_stack_pointer"](
+            self.store, -16
+        )
+
+        try:
+            challenge_ptr, challenge_len = self._write_to_memory(challenge)
+            prefix_ptr, prefix_len = self._write_to_memory(prefix)
+
+            self.instance.exports(self.store)["wasm_solve"](
+                self.store,
+                retptr,
+                challenge_ptr,
+                challenge_len,
+                prefix_ptr,
+                prefix_len,
+                float(difficulty)
+            )
+
+            memory_view = self.memory.data_ptr(self.store)
+
+            status = int.from_bytes(
+                bytes(memory_view[retptr:retptr + 4]),
+                byteorder='little',
+                signed=True
+            )
+
+            if status == 0:
+                return None
+
+            value_bytes = bytes(memory_view[retptr + 8:retptr + 16])
+            value = np.frombuffer(value_bytes, dtype=np.float64)[0]
+
+            return int(value)
+
+        finally:
+            self.instance.exports(self.store)["__wbindgen_add_to_stack_pointer"](
+                self.store, 16
+            )
 
 
 class DeepSeekPOW:
