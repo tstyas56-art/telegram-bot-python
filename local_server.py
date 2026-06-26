@@ -8,6 +8,8 @@ import os
 from api import DeepSeekAPI
 from pow import DeepSeekPOW
 import asyncio
+import base64
+import binascii
 import json
 import traceback
 import uuid
@@ -76,13 +78,50 @@ async def upload_file(file: UploadFile = File(...)):
                 pass
 
 # ---------- مسار حل PoW للدردشة (اختياري) ----------
+def _decode_pow_response(pow_response: str) -> dict:
+    """Decode and validate the base64 PoW payload returned by DeepSeekPOW."""
+    try:
+        decoded = base64.b64decode(pow_response).decode("utf-8")
+        payload = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("تعذر فك استجابة POW التي تم توليدها") from exc
+
+    required_fields = {
+        "algorithm",
+        "challenge",
+        "salt",
+        "answer",
+        "signature",
+        "target_path",
+    }
+    missing_fields = sorted(
+        field for field in required_fields
+        if field not in payload or payload[field] in (None, "")
+    )
+    if missing_fields:
+        raise ValueError(
+            "استجابة POW غير مكتملة؛ الحقول الناقصة: "
+            + ", ".join(missing_fields)
+        )
+
+    return payload
+
+
 @app.get("/pow")
 async def get_pow():
-    """يُعيد x-ds-pow-response جاهزًا للدردشة"""
+    """
+    يُعيد استجابة PoW كاملة.
+
+    pow_response هي القيمة الجاهزة لوضعها في ترويسة x-ds-pow-response،
+    وبقية الحقول مفكوكة لتطبيقات الواجهة التي تتحقق من اكتمال الاستجابة.
+    """
     try:
         challenge = await client._get_pow_challenge()
         pow_response = await pow_solver.solve_challenge(challenge)
-        return {"pow_response": pow_response}
+        payload = _decode_pow_response(pow_response)
+        return {"pow_response": pow_response, **payload}
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
