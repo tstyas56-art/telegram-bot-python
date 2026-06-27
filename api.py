@@ -1,5 +1,3 @@
-
-
 from curl_cffi.requests import AsyncSession
 from typing import Optional, Dict, Any, AsyncGenerator, Literal, List
 import json
@@ -370,6 +368,10 @@ class DeepSeekAPI:
 
         headers = self._get_headers(pow_response)
 
+        # حالة تتبع التفكير
+        thinking_active = False
+        thinking_done = False
+
         # Use async with for stream
         async with self.session.stream(
             'POST',
@@ -400,7 +402,38 @@ class DeepSeekAPI:
                 if not line or not line.strip():
                     continue
                 
-                parsed = self._parse_chunk_sync(line)
+                # فحص إذا كان السطر يحتوي على fragments لتحديث حالة التفكير
+                if line.startswith('data: ') or line.startswith('data:'):
+                    data_str = line[6:] if line.startswith('data: ') else line[5:]
+                    if data_str and data_str.strip():
+                        try:
+                            data = json.loads(data_str)
+                            # فحص fragments في v.response.fragments
+                            v_value = data.get('v', None)
+                            if isinstance(v_value, dict) and 'response' in v_value:
+                                fragments = v_value.get('response', {}).get('fragments', [])
+                                for frag in fragments:
+                                    if frag.get('type') == 'THINK':
+                                        thinking_active = True
+                                        thinking_done = False
+                                    elif frag.get('type') == 'RESPONSE':
+                                        thinking_active = False
+                                        thinking_done = True
+                            # فحص fragments في p=response/fragments مع o=APPEND
+                            if data.get('p') == 'response/fragments' and data.get('o') == 'APPEND':
+                                fragments = data.get('v', [])
+                                if isinstance(fragments, list):
+                                    for frag in fragments:
+                                        if frag.get('type') == 'THINK':
+                                            thinking_active = True
+                                            thinking_done = False
+                                        elif frag.get('type') == 'RESPONSE':
+                                            thinking_active = False
+                                            thinking_done = True
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            pass
+
+                parsed = self._parse_chunk_sync(line, thinking_active, thinking_done)
                 if parsed:
                     if parsed.get('type') == 'message_ids':
                         self.last_message_id[chat_session_id] = parsed['response_message_id']
@@ -435,7 +468,7 @@ class DeepSeekAPI:
 
             return json.loads(response.text)
 
-    def _parse_chunk_sync(self, chunk: str) -> Optional[Dict[str, Any]]:
+    def _parse_chunk_sync(self, chunk: str, thinking_active: bool = False, thinking_done: bool = False) -> Optional[Dict[str, Any]]:
         """Parse a SSE chunk from the API response (synchronous version)"""
         if not chunk:
             return None
@@ -462,11 +495,27 @@ class DeepSeekAPI:
                 v_value = data.get('v', '')
                 # Ensure v_value is a string
                 if isinstance(v_value, dict):
-                    # If it's a dict, convert to string or skip
+                    # Check if it's a fragments update
+                    if 'response' in v_value:
+                        response_data = v_value.get('response', {})
+                        fragments = response_data.get('fragments', [])
+                        for frag in fragments:
+                            if frag.get('type') == 'THINK':
+                                return {
+                                    'type': 'thinking_start',
+                                    'content': frag.get('content', ''),
+                                    'finish_reason': None
+                                }
+                            elif frag.get('type') == 'RESPONSE':
+                                return {
+                                    'type': 'response_start',
+                                    'content': frag.get('content', ''),
+                                    'finish_reason': None
+                                }
                     return None
                 return {
-                    'type': 'text',
-                    'content': str(v_value),  # Force to string
+                    'type': 'thinking' if thinking_active else 'text',
+                    'content': str(v_value),
                     'finish_reason': None
                 }
             
@@ -476,8 +525,16 @@ class DeepSeekAPI:
                 if isinstance(v_value, dict):
                     return None
                 return {
-                    'type': 'text',
-                    'content': str(v_value),  # Force to string
+                    'type': 'thinking' if thinking_active else 'text',
+                    'content': str(v_value),
+                    'finish_reason': None
+                }
+            
+            # Handle elapsed_secs (end of thinking)
+            if data.get('p') == 'response/fragments/-1/elapsed_secs' and data.get('o') == 'SET':
+                return {
+                    'type': 'thinking_end',
+                    'content': '',
                     'finish_reason': None
                 }
             
@@ -498,6 +555,24 @@ class DeepSeekAPI:
                     'content': ''
                 }
             
+            # Handle fragments append (check for THINK/RESPONSE)
+            if data.get('p') == 'response/fragments' and data.get('o') == 'APPEND':
+                fragments = data.get('v', [])
+                if isinstance(fragments, list):
+                    for frag in fragments:
+                        if frag.get('type') == 'THINK':
+                            return {
+                                'type': 'thinking_start',
+                                'content': frag.get('content', ''),
+                                'finish_reason': None
+                            }
+                        elif frag.get('type') == 'RESPONSE':
+                            return {
+                                'type': 'response_start',
+                                'content': frag.get('content', ''),
+                                'finish_reason': None
+                            }
+            
             # Skip other message types
             return None
             
@@ -506,6 +581,7 @@ class DeepSeekAPI:
         except Exception as e:
             print(f"Warning: Error parsing chunk: {e}", file=sys.stderr)
             return None
+
     async def close(self):
         """Close the async session"""
         await self.session.close()
