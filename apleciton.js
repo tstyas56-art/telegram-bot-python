@@ -771,7 +771,6 @@ export default function App() {
   }
 
   // الدالة الرئيسية للإرسال مع دعم parent_message_id و ref_file_ids و thinking_enabled و THINKING chunks
-  // الدالة الرئيسية للإرسال مع دعم parent_message_id و ref_file_ids و thinking_enabled و THINKING chunks
   async function askDeepseekStream({
     prompt,
     sessionId,
@@ -779,7 +778,6 @@ export default function App() {
     onChunk,
     onFirstResponse,
     onSearchResults,
-    onThinkingChunk,
     onDone,
     onError,
     refFileIds = [],
@@ -807,8 +805,7 @@ export default function App() {
       stream: true
     };
 
-    // ========== التعديل: استخدام الخادم الوسيط بدلاً من DeepSeek مباشرة ==========
-    const url = `${RAILWAY_SERVER_URL}/chat`;  // سيتم إنشاء هذا المسار في الخادم
+    const url = "https://chat.deepseek.com/api/v0/chat/completion";
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -821,168 +818,8 @@ export default function App() {
     let currentRequestMsgId = null;
     let currentResponseMsgId = null;
     let searchResults = [];
+    let searchHandled = false;
     let thinkingAccumulated = '';
-    let currentFragmentType = null; // تتبع نوع القطعة الحالية: 'thinking' أو 'response'
-
-    // دالة معالجة موحدة للقطع (تُستخدم في onprogress و onload)
-    const processLine = (line) => {
-      line = line.trim();
-      if (!line.startsWith("data: ")) return;
-      const rawData = line.substring(6);
-      let item;
-      try {
-        item = JSON.parse(rawData);
-      } catch (e) {
-        return;
-      }
-
-      // ========== معالجة النوع والقطع من الخادم الوسيط ==========
-      const msgType = item.type;
-
-      // التعامل مع معرفات الرسائل (أول رد)
-      if (msgType === 'message_ids') {
-        currentRequestMsgId = item.requestMessageId || item.request_message_id;
-        currentResponseMsgId = item.responseMessageId || item.response_message_id;
-        firstResponseHandled = true;
-        if (onFirstResponse) {
-          onFirstResponse({
-            requestMessageId: currentRequestMsgId,
-            responseMessageId: currentResponseMsgId,
-            sessionId: activeSessionId
-          });
-        }
-        return;
-      }
-
-      // التعامل مع نتائج البحث
-      if (msgType === 'search') {
-        searchResults = item.search_results || [];
-        if (onSearchResults && searchResults.length > 0) {
-          onSearchResults(searchResults);
-        }
-        return;
-      }
-
-      // التعامل مع محتوى التفكير
-      if (msgType === 'thinking') {
-        thinkingAccumulated += item.content || '';
-        if (onThinkingChunk) {
-          onThinkingChunk(thinkingAccumulated);
-        }
-        return;
-      }
-
-      // التعامل مع محتوى الرد
-      if (msgType === 'response') {
-        accumulatedText += item.content || '';
-        if (onChunk) {
-          onChunk(accumulatedText);
-        }
-        return;
-      }
-
-      // التعامل مع النص العام (للتوافق مع الإصدارات السابقة)
-      if (msgType === 'text') {
-        if (item.finish_reason === 'stop') return; // تجاهل إشارة التوقف
-        accumulatedText += item.content || '';
-        if (onChunk) {
-          onChunk(accumulatedText);
-        }
-        return;
-      }
-
-      // ========== التوافق المباشر مع DeepSeek API (بدون وسيط) ==========
-      // في حال تم استخدام الرابط المباشر، نحتفظ بالمنطق القديم المحسّن
-      
-      // التعامل مع أول رد يحمل معرفات الرسائل
-      if (!firstResponseHandled && item.request_message_id && item.response_message_id) {
-        currentRequestMsgId = item.request_message_id;
-        currentResponseMsgId = item.response_message_id;
-        firstResponseHandled = true;
-        if (onFirstResponse) {
-          onFirstResponse({
-            requestMessageId: currentRequestMsgId,
-            responseMessageId: currentResponseMsgId,
-            sessionId: activeSessionId
-          });
-        }
-        return;
-      }
-
-      // معالجة fragments من DeepSeek مباشرة
-      if (item.v && typeof item.v === 'object' && item.v.response && Array.isArray(item.v.response.fragments)) {
-        for (let frag of item.v.response.fragments) {
-          // تم التصحيح: "THINK" وليس "THINKING"
-          if (frag.type === "THINK") {
-            currentFragmentType = 'thinking';
-            if (frag.content) {
-              thinkingAccumulated += frag.content;
-              if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
-            }
-          } else if (frag.type === "RESPONSE") {
-            currentFragmentType = 'response';
-            if (frag.content) {
-              accumulatedText += frag.content;
-              if (onChunk) onChunk(accumulatedText);
-            }
-          } else if (frag.type === "SEARCH" && frag.results && frag.results.length > 0) {
-            searchResults = frag.results.map(r => ({
-              url: r.url,
-              title: r.title,
-              snippet: r.snippet,
-              site_name: r.site_name,
-              site_icon: r.site_icon
-            }));
-            if (onSearchResults) onSearchResults(searchResults);
-          }
-        }
-        return;
-      }
-
-      // معالجة النص المباشر في item.v (سلسلة نصية)
-      if (typeof item.v === 'string') {
-        if (currentFragmentType === 'thinking') {
-          thinkingAccumulated += item.v;
-          if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
-        } else {
-          accumulatedText += item.v;
-          if (onChunk) onChunk(accumulatedText);
-        }
-        return;
-      }
-
-      // عمليات APPEND
-      if (item.p === "response/fragments/-1/content" && item.o === "APPEND" && typeof item.v === 'string') {
-        if (currentFragmentType === 'thinking') {
-          thinkingAccumulated += item.v;
-          if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
-        } else {
-          accumulatedText += item.v;
-          if (onChunk) onChunk(accumulatedText);
-        }
-        return;
-      }
-
-      // إضافة Fragment جديدة (تغيير النوع)
-      if (item.p === "response/fragments" && item.o === "APPEND" && Array.isArray(item.v)) {
-        for (let frag of item.v) {
-          if (frag.type === "THINK") {
-            currentFragmentType = 'thinking';
-            if (frag.content) {
-              thinkingAccumulated += frag.content;
-              if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
-            }
-          } else if (frag.type === "RESPONSE") {
-            currentFragmentType = 'response';
-            if (frag.content) {
-              accumulatedText += frag.content;
-              if (onChunk) onChunk(accumulatedText);
-            }
-          }
-        }
-        return;
-      }
-    };
 
     xhr.onprogress = () => {
       const responseText = xhr.responseText;
@@ -991,7 +828,86 @@ export default function App() {
 
       const lines = newPart.split('\n');
       for (let line of lines) {
-        processLine(line);
+        line = line.trim();
+
+        if (!firstResponseHandled && line.startsWith("data: ")) {
+          const rawData = line.substring(6);
+          try {
+            const parsed = JSON.parse(rawData);
+            if (parsed.request_message_id && parsed.response_message_id) {
+              currentRequestMsgId = parsed.request_message_id;
+              currentResponseMsgId = parsed.response_message_id;
+              firstResponseHandled = true;
+              if (onFirstResponse) {
+                onFirstResponse({
+                  requestMessageId: currentRequestMsgId,
+                  responseMessageId: currentResponseMsgId,
+                  sessionId: activeSessionId
+                });
+              }
+              continue;
+            }
+          } catch (e) {}
+        }
+
+        if (!searchHandled && line.startsWith("data: ")) {
+          const rawChunk = line.substring(6);
+          try {
+            const item = JSON.parse(rawChunk);
+            if (item && item.v && typeof item.v === 'object') {
+              if (item.v.response && item.v.response.fragments) {
+                for (let frag of item.v.response.fragments) {
+                  if (frag.type === "SEARCH" && frag.results && frag.results.length > 0) {
+                    searchResults = frag.results.map(r => ({
+                      url: r.url,
+                      title: r.title,
+                      snippet: r.snippet,
+                      site_name: r.site_name,
+                      site_icon: r.site_icon
+                    }));
+                    searchHandled = true;
+                    if (onSearchResults) {
+                      onSearchResults(searchResults);
+                    }
+                  } else if (frag.type === "THINKING") {
+                    thinkingAccumulated += frag.content || '';
+                    // استدعاء callback خاص بالتفكير إذا وجد
+                    if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                  } else if (frag.type === "RESPONSE") {
+                    accumulatedText += frag.content || "";
+                  }
+                }
+              }
+            }
+          } catch (err) {}
+        }
+
+        if (line.startsWith("data: ")) {
+          const rawChunk = line.substring(6);
+          try {
+            const item = JSON.parse(rawChunk);
+            if (item && item.v) {
+              if (typeof item.v === 'string') {
+                accumulatedText += item.v;
+              } else if (typeof item.v === 'object' && item.v.response && item.v.response.fragments) {
+                for (let frag of item.v.response.fragments) {
+                  if (frag.type === "THINKING") {
+                    thinkingAccumulated += frag.content || '';
+                    if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                  } else if (frag.type === "RESPONSE") {
+                    accumulatedText += frag.content || "";
+                  }
+                }
+              }
+            }
+            if (item && item.p === "response/fragments/-1/content" && item.o === "APPEND" && item.v) {
+              accumulatedText += item.v;
+            }
+          } catch (err) {}
+        }
+      }
+      if (accumulatedText.length > 0) {
+        onChunk(accumulatedText);
       }
     };
 
@@ -1000,16 +916,70 @@ export default function App() {
         const remaining = xhr.responseText.substring(lastProcessedIndex);
         const lines = remaining.split('\n');
         for (let line of lines) {
-          processLine(line);
-        }
+          line = line.trim();
 
+          if (!searchHandled && line.startsWith("data: ")) {
+            const rawChunk = line.substring(6);
+            try {
+              const item = JSON.parse(rawChunk);
+              if (item && item.v && typeof item.v === 'object') {
+                if (item.v.response && item.v.response.fragments) {
+                  for (let frag of item.v.response.fragments) {
+                    if (frag.type === "SEARCH" && frag.results && frag.results.length > 0) {
+                      searchResults = frag.results.map(r => ({
+                        url: r.url,
+                        title: r.title,
+                        snippet: r.snippet,
+                        site_name: r.site_name,
+                        site_icon: r.site_icon
+                      }));
+                      searchHandled = true;
+                      if (onSearchResults) {
+                        onSearchResults(searchResults);
+                      }
+                    } else if (frag.type === "THINKING") {
+                      thinkingAccumulated += frag.content || '';
+                      if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                    } else if (frag.type === "RESPONSE") {
+                      accumulatedText += frag.content || "";
+                    }
+                  }
+                }
+              }
+            } catch (err) {}
+          }
+
+          if (line.startsWith("data: ")) {
+            const rawChunk = line.substring(6);
+            try {
+              const item = JSON.parse(rawChunk);
+              if (item && item.v) {
+                if (typeof item.v === 'string') {
+                  accumulatedText += item.v;
+                } else if (typeof item.v === 'object' && item.v.response && item.v.response.fragments) {
+                  for (let frag of item.v.response.fragments) {
+                    if (frag.type === "THINKING") {
+                      thinkingAccumulated += frag.content || '';
+                      if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                    } else if (frag.type === "RESPONSE") {
+                      accumulatedText += frag.content || "";
+                    }
+                  }
+                }
+              }
+              if (item && item.p === "response/fragments/-1/content" && item.o === "APPEND" && item.v) {
+                accumulatedText += item.v;
+              }
+            } catch (e) {}
+          }
+        }
         onDone({
           text: accumulatedText,
           sessionId: activeSessionId,
           requestMessageId: currentRequestMsgId,
           responseMessageId: currentResponseMsgId,
           searchResults: searchResults,
-          thinkingText: thinkingAccumulated
+          thinkingText: thinkingAccumulated // إرجاع نص التفكير النهائي
         });
       } else {
         onError(new Error(`خطأ ${xhr.status}: ${xhr.responseText}`));
@@ -1191,7 +1161,7 @@ export default function App() {
     // مسح الملفات بعد الإرسال
     setPendingFiles([]);
 
-    // دالة معالجة تدفق التفكير (سيتم استدعاؤها من داخل askDeepseekStream)
+    // دالة معالجة تدفق التفكير
     const onThinkingChunk = (thinkingText) => {
       setChats(prev =>
         prev.map(c =>
