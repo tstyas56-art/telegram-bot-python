@@ -368,10 +368,6 @@ class DeepSeekAPI:
 
         headers = self._get_headers(pow_response)
 
-        # حالة تتبع التفكير
-        thinking_active = False
-        thinking_done = False
-
         # Use async with for stream
         async with self.session.stream(
             'POST',
@@ -383,7 +379,7 @@ class DeepSeekAPI:
         ) as response:
 
             if response.status_code != 200:
-                text = response.text
+                text = await response.atext()
                 if response.status_code == 401:
                     raise AuthenticationError("Invalid or expired authentication token")
                 elif response.status_code == 429:
@@ -392,57 +388,32 @@ class DeepSeekAPI:
                     raise APIError(text, response.status_code)
 
             self.last_message_id = {}
-
-            async for line in response.aiter_lines():
-                # Decode bytes to string if needed
-                if isinstance(line, bytes):
-                    line = line.decode('utf-8')
-                
-                # Skip empty lines
-                if not line or not line.strip():
+            buffer = ""
+            
+            async for chunk in response.aiter_text():
+                if not chunk:
                     continue
+                    
+                buffer += chunk
                 
-                # فحص إذا كان السطر يحتوي على fragments لتحديث حالة التفكير
-                if line.startswith('data: ') or line.startswith('data:'):
-                    data_str = line[6:] if line.startswith('data: ') else line[5:]
-                    if data_str and data_str.strip():
-                        try:
-                            data = json.loads(data_str)
-                            # فحص fragments في v.response.fragments
-                            v_value = data.get('v', None)
-                            if isinstance(v_value, dict) and 'response' in v_value:
-                                fragments = v_value.get('response', {}).get('fragments', [])
-                                for frag in fragments:
-                                    if frag.get('type') == 'THINK':
-                                        thinking_active = True
-                                        thinking_done = False
-                                    elif frag.get('type') == 'RESPONSE':
-                                        thinking_active = False
-                                        thinking_done = True
-                            # فحص fragments في p=response/fragments مع o=APPEND
-                            if data.get('p') == 'response/fragments' and data.get('o') == 'APPEND':
-                                fragments = data.get('v', [])
-                                if isinstance(fragments, list):
-                                    for frag in fragments:
-                                        if frag.get('type') == 'THINK':
-                                            thinking_active = True
-                                            thinking_done = False
-                                        elif frag.get('type') == 'RESPONSE':
-                                            thinking_active = False
-                                            thinking_done = True
-                        except (json.JSONDecodeError, KeyError, TypeError):
-                            pass
-
-                parsed = self._parse_chunk_sync(line, thinking_active, thinking_done)
-                if parsed:
-                    if parsed.get('type') == 'message_ids':
-                        self.last_message_id[chat_session_id] = parsed['response_message_id']
+                # Process complete lines from buffer
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    
+                    if not line:
                         continue
+                    
+                    parsed = self._parse_chunk_sync(line)
+                    if parsed:
+                        if parsed.get('type') == 'message_ids':
+                            self.last_message_id[chat_session_id] = parsed['response_message_id']
+                            continue
 
-                    yield parsed
+                        yield parsed
 
-                    if parsed.get('finish_reason') == 'stop':
-                        break
+                        if parsed.get('finish_reason') == 'stop':
+                            break
 
     async def get_history(self, convo_id: str) -> Dict[str, Any]:
         """Fetch full conversation history"""
@@ -463,12 +434,12 @@ class DeepSeekAPI:
             if response.status_code != 200:
                 return {
                     "error": response.status_code,
-                    "detail": response.text
+                    "detail": await response.atext()
                 }
 
-            return json.loads(response.text)
+            return json.loads(await response.atext())
 
-    def _parse_chunk_sync(self, chunk: str, thinking_active: bool = False, thinking_done: bool = False) -> Optional[Dict[str, Any]]:
+    def _parse_chunk_sync(self, chunk: str) -> Optional[Dict[str, Any]]:
         """Parse a SSE chunk from the API response (synchronous version)"""
         if not chunk:
             return None
@@ -490,32 +461,62 @@ class DeepSeekAPI:
             # Parse JSON
             data = json.loads(data_str)
             
+            # Handle message IDs (first message) - check this BEFORE processing fragments
+            if 'request_message_id' in data and 'response_message_id' in data:
+                return {
+                    'type': 'message_ids',
+                    'response_message_id': data['response_message_id'],
+                    'finish_reason': None,
+                    'content': ''
+                }
+            
+            # Handle fragments in v.response.fragments
+            if 'v' in data and isinstance(data['v'], dict) and 'response' in data['v']:
+                response_data = data['v']['response']
+                if 'fragments' in response_data and isinstance(response_data['fragments'], list):
+                    for frag in response_data['fragments']:
+                        frag_type = frag.get('type', '')
+                        
+                        if frag_type == 'SEARCH':
+                            # Return search results as a special type
+                            return {
+                                'type': 'search',
+                                'content': '',
+                                'finish_reason': None,
+                                'search_results': frag.get('results', [])
+                            }
+                        elif frag_type == 'THINK':
+                            # Return thinking content separately
+                            thinking_content = frag.get('content', '')
+                            if thinking_content:
+                                return {
+                                    'type': 'thinking',
+                                    'content': str(thinking_content),
+                                    'finish_reason': None
+                                }
+                        elif frag_type == 'RESPONSE':
+                            # Return response content separately
+                            response_content = frag.get('content', '')
+                            if response_content:
+                                return {
+                                    'type': 'response',
+                                    'content': str(response_content),
+                                    'finish_reason': None
+                                }
+                    
+                    # If no fragments processed, return None for this chunk
+                    return None
+            
             # Handle chunks with just 'v' field (simplified format)
             if 'v' in data and 'p' not in data:
                 v_value = data.get('v', '')
                 # Ensure v_value is a string
                 if isinstance(v_value, dict):
-                    # Check if it's a fragments update
-                    if 'response' in v_value:
-                        response_data = v_value.get('response', {})
-                        fragments = response_data.get('fragments', [])
-                        for frag in fragments:
-                            if frag.get('type') == 'THINK':
-                                return {
-                                    'type': 'thinking_start',
-                                    'content': frag.get('content', ''),
-                                    'finish_reason': None
-                                }
-                            elif frag.get('type') == 'RESPONSE':
-                                return {
-                                    'type': 'response_start',
-                                    'content': frag.get('content', ''),
-                                    'finish_reason': None
-                                }
+                    # If it's a dict, convert to string or skip
                     return None
                 return {
-                    'type': 'thinking' if thinking_active else 'text',
-                    'content': str(v_value),
+                    'type': 'text',
+                    'content': str(v_value),  # Force to string
                     'finish_reason': None
                 }
             
@@ -525,16 +526,8 @@ class DeepSeekAPI:
                 if isinstance(v_value, dict):
                     return None
                 return {
-                    'type': 'thinking' if thinking_active else 'text',
-                    'content': str(v_value),
-                    'finish_reason': None
-                }
-            
-            # Handle elapsed_secs (end of thinking)
-            if data.get('p') == 'response/fragments/-1/elapsed_secs' and data.get('o') == 'SET':
-                return {
-                    'type': 'thinking_end',
-                    'content': '',
+                    'type': 'text',
+                    'content': str(v_value),  # Force to string
                     'finish_reason': None
                 }
             
@@ -545,33 +538,6 @@ class DeepSeekAPI:
                     'content': '',
                     'finish_reason': 'stop'
                 }
-            
-            # Handle message IDs (first message)
-            if 'request_message_id' in data and 'response_message_id' in data:
-                return {
-                    'type': 'message_ids',
-                    'response_message_id': data['response_message_id'],
-                    'finish_reason': None,
-                    'content': ''
-                }
-            
-            # Handle fragments append (check for THINK/RESPONSE)
-            if data.get('p') == 'response/fragments' and data.get('o') == 'APPEND':
-                fragments = data.get('v', [])
-                if isinstance(fragments, list):
-                    for frag in fragments:
-                        if frag.get('type') == 'THINK':
-                            return {
-                                'type': 'thinking_start',
-                                'content': frag.get('content', ''),
-                                'finish_reason': None
-                            }
-                        elif frag.get('type') == 'RESPONSE':
-                            return {
-                                'type': 'response_start',
-                                'content': frag.get('content', ''),
-                                'finish_reason': None
-                            }
             
             # Skip other message types
             return None
