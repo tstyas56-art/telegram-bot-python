@@ -24,6 +24,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 
 // ================= البيانات الأساسية الثابتة =================
 const TOKEN = "IVlSFv6JwO2TttyAhMW6Cu9/eMCDQhcfY0uHWu000SDnAyEwsYxtR8rFADgo22LM";
@@ -438,10 +439,11 @@ function MarkdownText({ text, style, fontSize = 16 }) {
   );
 }
 
-// ================= مكون الرسالة القابل للطي =================
+// ================= مكون الرسالة القابل للطي (مع دعم التفكير) =================
 function CollapsibleMessage({ item, isStreaming, isLoading, hasSources, openSourcesModal, bubbleFontSize, longMessageCollapseEnabled, longMessageCollapseTarget, onOpenMessageModal, onRegenerateMessage }) {
   const [expanded, setExpanded] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
+  const [thinkingVisible, setThinkingVisible] = useState(true); // مفتوح افتراضياً أثناء التدفق
 
   const copyFullMessage = async () => {
     await Clipboard.setStringAsync(item.text || '');
@@ -457,8 +459,34 @@ function CollapsibleMessage({ item, isStreaming, isLoading, hasSources, openSour
   const isLongMessage = item.text && item.text.split(/\r\n|\r|\n/).length > 4;
   const shouldCollapse = shouldApplyCollapse && isLongMessage && !expanded;
 
+  // إذا انتهى التفكير (لم يعد هناك تدفق) نغلق الصندوق تلقائياً
+  useEffect(() => {
+    if (!isStreaming && item.thinkingText) {
+      setThinkingVisible(false);
+    }
+  }, [isStreaming, item.thinkingText]);
+
   return (
     <View style={{ flex: 1, alignItems: item.sender === 'user' ? 'flex-start' : 'flex-end' }}>
+      {/* صندوق التفكير */}
+      {item.sender === 'ai' && item.thinkingText ? (
+        <View style={styles.thinkingContainer}>
+          <TouchableOpacity
+            style={styles.thinkingHeader}
+            onPress={() => setThinkingVisible(!thinkingVisible)}
+          >
+            <Ionicons name="bulb-outline" size={16} color="#aaa" />
+            <Text style={styles.thinkingHeaderText}>التفكير</Text>
+            <Ionicons name={thinkingVisible ? 'chevron-up' : 'chevron-down'} size={16} color="#aaa" />
+          </TouchableOpacity>
+          {thinkingVisible && (
+            <View style={styles.thinkingBody}>
+              <MarkdownText text={item.thinkingText} fontSize={bubbleFontSize - 2} style={styles.thinkingText} />
+            </View>
+          )}
+        </View>
+      ) : null}
+
       <TouchableOpacity
         activeOpacity={0.92}
         onLongPress={() => onOpenMessageModal(item)}
@@ -487,7 +515,7 @@ function CollapsibleMessage({ item, isStreaming, isLoading, hasSources, openSour
             <Text style={styles.expandMessageButtonText}>إخفاء الرسالة</Text>
           </TouchableOpacity>
         )}
-        {isStreaming && isLoading && item.text.length === 0 && (
+        {isStreaming && isLoading && item.text.length === 0 && !item.thinkingText && (
           <View style={styles.typingIndicator}>
             <ActivityIndicator size="small" color="#ffffff" />
           </View>
@@ -544,12 +572,21 @@ export default function App() {
   const [chatToRename, setChatToRename] = useState(null);
   const [renameText, setRenameText] = useState('');
 
-  const [pendingFiles, setPendingFiles] = useState([]); // [{ id: string, name: string, fileId: string }]
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [fullImageUri, setFullImageUri] = useState(null);
+
+  // حالات الأوضاع العامة
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [globalSearchEnabled, setGlobalSearchEnabled] = useState(true);
 
   const sidebarAnim = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const flatListRef = useRef();
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const sendButtonScale = useRef(new Animated.Value(1)).current;
+
+  // حالات التمرير الذكي
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const currentChat = chats.find(c => c.id === currentChatId) || chats[0];
   const sortedChats = [...chats].sort((a, b) => (b.pinned === true) - (a.pinned === true));
@@ -565,7 +602,7 @@ export default function App() {
 
   useEffect(() => {
     saveSettingsToStorage();
-  }, [bubbleFontSize, longMessageCollapseEnabled, longMessageCollapseTarget]);
+  }, [bubbleFontSize, longMessageCollapseEnabled, longMessageCollapseTarget, thinkingEnabled, globalSearchEnabled]);
 
   const loadChatsFromStorage = async () => {
     try {
@@ -574,6 +611,9 @@ export default function App() {
       const savedBubbleFontSize = await AsyncStorage.getItem('@deepseek_premium_bubble_font_size');
       const savedLongMessageCollapseEnabled = await AsyncStorage.getItem('@deepseek_premium_long_collapse_enabled');
       const savedLongMessageCollapseTarget = await AsyncStorage.getItem('@deepseek_premium_long_collapse_target');
+      const savedThinkingEnabled = await AsyncStorage.getItem('@deepseek_premium_thinking_enabled');
+      const savedSearchEnabled = await AsyncStorage.getItem('@deepseek_premium_search_enabled');
+
       if (savedBubbleFontSize) {
         setBubbleFontSize(Number(savedBubbleFontSize));
       }
@@ -583,6 +623,13 @@ export default function App() {
       if (savedLongMessageCollapseTarget) {
         setLongMessageCollapseTarget(savedLongMessageCollapseTarget);
       }
+      if (savedThinkingEnabled !== null) {
+        setThinkingEnabled(savedThinkingEnabled === 'true');
+      }
+      if (savedSearchEnabled !== null) {
+        setGlobalSearchEnabled(savedSearchEnabled === 'true');
+      }
+
       if (savedChats) {
         const parsedChats = JSON.parse(savedChats).map(chat => ({
           pinned: false,
@@ -615,6 +662,8 @@ export default function App() {
       await AsyncStorage.setItem('@deepseek_premium_bubble_font_size', String(bubbleFontSize));
       await AsyncStorage.setItem('@deepseek_premium_long_collapse_enabled', String(longMessageCollapseEnabled));
       await AsyncStorage.setItem('@deepseek_premium_long_collapse_target', longMessageCollapseTarget);
+      await AsyncStorage.setItem('@deepseek_premium_thinking_enabled', String(thinkingEnabled));
+      await AsyncStorage.setItem('@deepseek_premium_search_enabled', String(globalSearchEnabled));
     } catch (e) {
       console.error("⚠️ فشل حفظ الإعدادات:", e);
     }
@@ -721,7 +770,7 @@ export default function App() {
     }
   }
 
-  // الدالة الرئيسية للإرسال مع دعم parent_message_id و ref_file_ids
+  // الدالة الرئيسية للإرسال مع دعم parent_message_id و ref_file_ids و thinking_enabled و THINKING chunks
   async function askDeepseekStream({
     prompt,
     sessionId,
@@ -733,6 +782,7 @@ export default function App() {
     onError,
     refFileIds = [],
     searchEnabled = true,
+    thinkingEnabled = false,
   }) {
     let activeSessionId = sessionId;
     if (!activeSessionId) {
@@ -747,7 +797,7 @@ export default function App() {
       parent_message_id: parentMessageId,
       prompt: prompt,
       ref_file_ids: refFileIds,
-      thinking_enabled: false,
+      thinking_enabled: thinkingEnabled,
       search_enabled: searchEnabled,
       action: null,
       preempt: false,
@@ -769,6 +819,7 @@ export default function App() {
     let currentResponseMsgId = null;
     let searchResults = [];
     let searchHandled = false;
+    let thinkingAccumulated = '';
 
     xhr.onprogress = () => {
       const responseText = xhr.responseText;
@@ -818,6 +869,12 @@ export default function App() {
                     if (onSearchResults) {
                       onSearchResults(searchResults);
                     }
+                  } else if (frag.type === "THINKING") {
+                    thinkingAccumulated += frag.content || '';
+                    // استدعاء callback خاص بالتفكير إذا وجد
+                    if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                  } else if (frag.type === "RESPONSE") {
+                    accumulatedText += frag.content || "";
                   }
                 }
               }
@@ -834,7 +891,10 @@ export default function App() {
                 accumulatedText += item.v;
               } else if (typeof item.v === 'object' && item.v.response && item.v.response.fragments) {
                 for (let frag of item.v.response.fragments) {
-                  if (frag.type === "RESPONSE") {
+                  if (frag.type === "THINKING") {
+                    thinkingAccumulated += frag.content || '';
+                    if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                  } else if (frag.type === "RESPONSE") {
                     accumulatedText += frag.content || "";
                   }
                 }
@@ -877,6 +937,11 @@ export default function App() {
                       if (onSearchResults) {
                         onSearchResults(searchResults);
                       }
+                    } else if (frag.type === "THINKING") {
+                      thinkingAccumulated += frag.content || '';
+                      if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                    } else if (frag.type === "RESPONSE") {
+                      accumulatedText += frag.content || "";
                     }
                   }
                 }
@@ -893,7 +958,10 @@ export default function App() {
                   accumulatedText += item.v;
                 } else if (typeof item.v === 'object' && item.v.response && item.v.response.fragments) {
                   for (let frag of item.v.response.fragments) {
-                    if (frag.type === "RESPONSE") {
+                    if (frag.type === "THINKING") {
+                      thinkingAccumulated += frag.content || '';
+                      if (onThinkingChunk) onThinkingChunk(thinkingAccumulated);
+                    } else if (frag.type === "RESPONSE") {
                       accumulatedText += frag.content || "";
                     }
                   }
@@ -910,7 +978,8 @@ export default function App() {
           sessionId: activeSessionId,
           requestMessageId: currentRequestMsgId,
           responseMessageId: currentResponseMsgId,
-          searchResults: searchResults
+          searchResults: searchResults,
+          thinkingText: thinkingAccumulated // إرجاع نص التفكير النهائي
         });
       } else {
         onError(new Error(`خطأ ${xhr.status}: ${xhr.responseText}`));
@@ -954,37 +1023,86 @@ export default function App() {
     }
   };
 
-  // --- اختيار ملف من الجهاز ورفعه ---
-  const pickAndUploadFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled) return;
-
-      const file = result.assets[0];
-      const fileUri = file.uri;
-      const fileName = file.name;
-      const fileId = await uploadFileAndGetId(fileUri, fileName);
-
-      if (fileId) {
-        const newFile = {
-          id: Date.now().toString(),
-          name: fileName,
-          fileId: fileId,
-        };
-        setPendingFiles(prev => [...prev, newFile]);
-      }
-    } catch (err) {
-      console.log(err);
-    }
+  // --- اختيار ملفات أو صور من الجهاز ورفعها ---
+  const pickAndUploadFile = () => {
+    Alert.alert(
+      'إرفاق ملف',
+      'اختر نوع الملف الذي تريد إرفاقه',
+      [
+        {
+          text: 'ملف (مستندات، PDF، إلخ)',
+          onPress: async () => {
+            try {
+              const result = await DocumentPicker.getDocumentAsync({
+                type: '*/*',
+                copyToCacheDirectory: true,
+                multiple: true,
+              });
+              if (result.canceled) return;
+              const files = result.assets || [result];
+              for (const file of files) {
+                const fileUri = file.uri;
+                const fileName = file.name;
+                const fileId = await uploadFileAndGetId(fileUri, fileName);
+                if (fileId) {
+                  setPendingFiles(prev => [...prev, {
+                    id: Date.now().toString() + Math.random(),
+                    name: fileName,
+                    fileId,
+                    uri: fileUri,
+                    type: 'file',
+                  }]);
+                }
+              }
+            } catch (err) {
+              console.log(err);
+            }
+          },
+        },
+        {
+          text: 'صورة',
+          onPress: async () => {
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== 'granted') {
+              Alert.alert('صلاحية مرفوضة', 'نحتاج صلاحية الوصول للصور لرفعها.');
+              return;
+            }
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsMultipleSelection: true,
+              quality: 1,
+            });
+            if (result.canceled) return;
+            const assets = result.assets;
+            for (const asset of assets) {
+              const fileUri = asset.uri;
+              const fileName = asset.fileName || `image_${Date.now()}.jpg`;
+              const fileId = await uploadFileAndGetId(fileUri, fileName);
+              if (fileId) {
+                setPendingFiles(prev => [...prev, {
+                  id: Date.now().toString() + Math.random(),
+                  name: fileName,
+                  fileId,
+                  uri: fileUri,
+                  type: 'image',
+                }]);
+              }
+            }
+          },
+        },
+        { text: 'إلغاء', style: 'cancel' },
+      ],
+    );
   };
 
   // إزالة ملف من قائمة المرفقات
   const removeFile = (id) => {
     setPendingFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  // فتح الصورة بالحجم الكامل
+  const openFullImage = (uri) => {
+    setFullImageUri(uri);
   };
 
   // --- إرسال الرسالة من الواجهة ---
@@ -999,7 +1117,8 @@ export default function App() {
     const userMessage = {
       id: userMessageId,
       sender: 'user',
-      text: userMessageText
+      text: userMessageText,
+      attachments: pendingFiles.length > 0 ? [...pendingFiles] : undefined,
     };
 
     const updatedMessages = [...currentChat.messages, userMessage];
@@ -1022,6 +1141,7 @@ export default function App() {
       sender: 'ai',
       text: '',
       sources: [],
+      thinkingText: null,
     };
     const messagesWithPlaceholder = [...updatedMessages, aiPlaceholder];
     setChats(prev =>
@@ -1036,10 +1156,26 @@ export default function App() {
 
     // تجهيز معرّفات الملفات
     const refFileIds = pendingFiles.map(f => f.fileId);
-    // تعطيل البحث في حالة وجود ملفات
-    const searchEnabled = pendingFiles.length === 0;
+    // البحث يكون حسب الإعداد العام (لا تعطيل)
+    const effectiveSearchEnabled = globalSearchEnabled;
     // مسح الملفات بعد الإرسال
     setPendingFiles([]);
+
+    // دالة معالجة تدفق التفكير
+    const onThinkingChunk = (thinkingText) => {
+      setChats(prev =>
+        prev.map(c =>
+          c.id === currentChatId
+            ? {
+                ...c,
+                messages: c.messages.map(m =>
+                  m.id === tempAiId ? { ...m, thinkingText } : m
+                )
+              }
+            : c
+        )
+      );
+    };
 
     try {
       await askDeepseekStream({
@@ -1047,7 +1183,9 @@ export default function App() {
         sessionId: currentChat.session_id,
         parentMessageId: currentChat.parent_message_id,
         refFileIds: refFileIds,
-        searchEnabled: searchEnabled,
+        searchEnabled: effectiveSearchEnabled,
+        thinkingEnabled: thinkingEnabled,
+        onThinkingChunk: onThinkingChunk,
         onChunk: (chunkText) => {
           setStreamingText(chunkText);
           setChats(prev =>
@@ -1090,7 +1228,7 @@ export default function App() {
             )
           );
         },
-        onDone: ({ text, sessionId, responseMessageId, searchResults }) => {
+        onDone: ({ text, sessionId, responseMessageId, searchResults, thinkingText }) => {
           setChats(prev =>
             prev.map(c =>
               c.id === currentChatId
@@ -1099,7 +1237,7 @@ export default function App() {
                     session_id: sessionId,
                     parent_message_id: responseMessageId,
                     messages: c.messages.map(m =>
-                      m.id === tempAiId ? { ...m, text: text, sources: searchResults || m.sources } : m
+                      m.id === tempAiId ? { ...m, text: text, sources: searchResults || m.sources, thinkingText: thinkingText || m.thinkingText } : m
                     )
                   }
                 : c
@@ -1107,7 +1245,9 @@ export default function App() {
           );
           setStreamingMessageId(null);
           setIsLoading(false);
-          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          if (isNearBottom) {
+            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          }
         },
         onError: (error) => {
           const errorMessage = `❌ فشل الاتصال بالخادم: ${error.message}`;
@@ -1278,16 +1418,33 @@ export default function App() {
     setStreamingText('');
     setChats(prev => prev.map(chat => chat.id === currentChatId ? {
       ...chat,
-      messages: chat.messages.map(message => message.id === aiMessageId ? { ...message, text: '', sources: [] } : message)
+      messages: chat.messages.map(message => message.id === aiMessageId ? { ...message, text: '', sources: [], thinkingText: null } : message)
     } : chat));
+
+    const onThinkingChunk = (thinkingText) => {
+      setChats(prev =>
+        prev.map(c =>
+          c.id === currentChatId
+            ? {
+                ...c,
+                messages: c.messages.map(m =>
+                  m.id === aiMessageId ? { ...m, thinkingText } : m
+                )
+              }
+            : c
+        )
+      );
+    };
 
     try {
       await askDeepseekStream({
         prompt: previousUserMessage.text,
         sessionId: targetChat.session_id,
         parentMessageId: targetChat.parent_message_id,
-        refFileIds: [], // لا نعيد إرسال ملفات قديمة تلقائياً
-        searchEnabled: true,
+        refFileIds: [],
+        searchEnabled: globalSearchEnabled,
+        thinkingEnabled: thinkingEnabled,
+        onThinkingChunk: onThinkingChunk,
         onChunk: (chunkText) => {
           setStreamingText(chunkText);
           setChats(prev => prev.map(chat => chat.id === currentChatId ? {
@@ -1304,15 +1461,18 @@ export default function App() {
             messages: chat.messages.map(message => message.id === aiMessageId ? { ...message, sources } : message)
           } : chat));
         },
-        onDone: ({ text, sessionId, responseMessageId, searchResults }) => {
+        onDone: ({ text, sessionId, responseMessageId, searchResults, thinkingText }) => {
           setChats(prev => prev.map(chat => chat.id === currentChatId ? {
             ...chat,
             session_id: sessionId,
             parent_message_id: responseMessageId,
-            messages: chat.messages.map(message => message.id === aiMessageId ? { ...message, text, sources: searchResults || message.sources } : message)
+            messages: chat.messages.map(message => message.id === aiMessageId ? { ...message, text, sources: searchResults || message.sources, thinkingText: thinkingText || message.thinkingText } : message)
           } : chat));
           setStreamingMessageId(null);
           setIsLoading(false);
+          if (isNearBottom) {
+            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          }
         },
         onError: (error) => {
           setChats(prev => prev.map(chat => chat.id === currentChatId ? {
@@ -1331,6 +1491,48 @@ export default function App() {
       setStreamingMessageId(null);
       setIsLoading(false);
     }
+  };
+
+  // التحكم في التمرير
+  const handleScroll = (event) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    const contentHeight = event.nativeEvent.contentSize.height;
+    const layoutHeight = event.nativeEvent.layoutMeasurement.height;
+    const distanceFromBottom = contentHeight - offsetY - layoutHeight;
+    const nearBottom = distanceFromBottom < 100;
+    setIsNearBottom(nearBottom);
+    setShowScrollToBottom(!nearBottom && contentHeight > layoutHeight * 2);
+  };
+
+  const scrollToBottom = () => {
+    flatListRef.current?.scrollToEnd({ animated: true });
+    setIsNearBottom(true);
+    setShowScrollToBottom(false);
+  };
+
+  // مكون عرض المرفقات داخل رسالة المستخدم
+  const renderMessageAttachments = (attachments) => {
+    if (!attachments || attachments.length === 0) return null;
+    return (
+      <View style={styles.userAttachmentsContainer}>
+        {attachments.map(att => (
+          att.type === 'image' ? (
+            <TouchableOpacity
+              key={att.id}
+              onPress={() => openFullImage(att.uri)}
+              style={styles.userImageAttachment}
+            >
+              <Image source={{ uri: att.uri }} style={styles.userImageThumb} resizeMode="cover" />
+            </TouchableOpacity>
+          ) : (
+            <View key={att.id} style={styles.userFileAttachment}>
+              <Ionicons name="document-outline" size={20} color="#ffffff" />
+              <Text style={styles.userFileName} numberOfLines={1}>{att.name}</Text>
+            </View>
+          )
+        ))}
+      </View>
+    );
   };
 
   return (
@@ -1358,12 +1560,20 @@ export default function App() {
           data={currentChat.messages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => {
+            if (isNearBottom) {
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
+          onScroll={handleScroll}
+          scrollEventThrottle={100}
           renderItem={({ item }) => {
             const isStreaming = item.id === streamingMessageId;
             const hasSources = item.sender === 'ai' && item.sources && item.sources.length > 0;
             return (
               <View style={[styles.messageRow, item.sender === 'user' ? styles.userRow : styles.aiRow]}>
+                {/* عرض المرفقات قبل فقاعة الرسالة للمستخدم */}
+                {item.sender === 'user' && renderMessageAttachments(item.attachments)}
                 <CollapsibleMessage
                   item={item}
                   isStreaming={isStreaming}
@@ -1387,6 +1597,13 @@ export default function App() {
           )}
         />
 
+        {/* زر الرجوع للأسفل */}
+        {showScrollToBottom && (
+          <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
+            <Ionicons name="chevron-down" size={24} color="#000000" />
+          </TouchableOpacity>
+        )}
+
         {/* حقل الإدخال مع المرفقات */}
         <View style={styles.inputWrapper}>
           {/* صف المرفقات في الأسفل */}
@@ -1395,6 +1612,11 @@ export default function App() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
                 {pendingFiles.map(file => (
                   <View key={file.id} style={styles.attachmentChip}>
+                    {file.type === 'image' ? (
+                      <Image source={{ uri: file.uri }} style={styles.previewThumb} />
+                    ) : (
+                      <Ionicons name="document-outline" size={18} color="#ffffff" />
+                    )}
                     <Text style={styles.attachmentChipText} numberOfLines={1}>{file.name}</Text>
                     <TouchableOpacity onPress={() => removeFile(file.id)} style={{ marginLeft: 4 }}>
                       <Ionicons name="close-circle" size={18} color="#aaaaaa" />
@@ -1407,38 +1629,82 @@ export default function App() {
               </TouchableOpacity>
             </View>
           )}
-          {/* حقل النص وزر الإرسال */}
+
+          {/* حقل النص وزر الإرسال - الموسع ليسع سطرين */}
           <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="اكتب هنا سؤالك..."
-              placeholderTextColor="#666666"
-              value={inputText}
-              onChangeText={setInputText}
-              multiline
-            />
-            <View style={styles.inputActions}>
-              {pendingFiles.length === 0 && (
-                <TouchableOpacity style={styles.attachButton} onPress={pickAndUploadFile}>
-                  <Ionicons name="attach-outline" size={24} color="#ffffff" />
-                </TouchableOpacity>
-              )}
-              <Animated.View style={{ transform: [{ scale: sendButtonScale }] }}>
-                <TouchableOpacity
-                  style={[styles.sendButton, !inputText.trim() && pendingFiles.length === 0 && styles.sendButtonDisabled]}
-                  onPress={() => {
-                    animateSendButton();
-                    handleSendMessage();
-                  }}
-                  disabled={(!inputText.trim() && pendingFiles.length === 0) || isLoading}
-                >
-                  <Ionicons name="arrow-up" size={20} color="#000000" />
-                </TouchableOpacity>
-              </Animated.View>
+            {/* السطر الأول: TextInput + زر الإرسال */}
+            <View style={styles.inputRow}>
+              <TextInput
+                style={styles.input}
+                placeholder="اكتب هنا سؤالك..."
+                placeholderTextColor="#666666"
+                value={inputText}
+                onChangeText={setInputText}
+                multiline
+              />
+              <View style={styles.inputActions}>
+                <Animated.View style={{ transform: [{ scale: sendButtonScale }] }}>
+                  <TouchableOpacity
+                    style={[styles.sendButton, !inputText.trim() && pendingFiles.length === 0 && styles.sendButtonDisabled]}
+                    onPress={() => {
+                      animateSendButton();
+                      handleSendMessage();
+                    }}
+                    disabled={(!inputText.trim() && pendingFiles.length === 0) || isLoading}
+                  >
+                    <Ionicons name="arrow-up" size={20} color="#000000" />
+                  </TouchableOpacity>
+                </Animated.View>
+              </View>
+            </View>
+
+            {/* السطر الثاني: أزرار الأوضاع والمرفقات */}
+            <View style={styles.controlsRow}>
+              {/* زر إرفاق ملفات (يمين) */}
+              <TouchableOpacity style={styles.controlButton} onPress={pickAndUploadFile}>
+                <Ionicons name="attach-outline" size={22} color="#ffffff" />
+              </TouchableOpacity>
+
+              {/* زر البحث (يسار) */}
+              <TouchableOpacity style={styles.controlButton} onPress={() => setGlobalSearchEnabled(!globalSearchEnabled)}>
+                <Ionicons 
+                  name={globalSearchEnabled ? "globe" : "globe-outline"} 
+                  size={22} 
+                  color={globalSearchEnabled ? "#3b82f6" : "#666666"} 
+                />
+              </TouchableOpacity>
+
+              {/* زر التفكير (يسار) */}
+              <TouchableOpacity style={styles.controlButton} onPress={() => setThinkingEnabled(!thinkingEnabled)}>
+                <Ionicons 
+                  name={thinkingEnabled ? "bulb" : "bulb-outline"} 
+                  size={22} 
+                  color={thinkingEnabled ? "#eab308" : "#666666"} 
+                />
+              </TouchableOpacity>
             </View>
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* مودال عرض الصورة بالحجم الكامل */}
+      <Modal
+        visible={!!fullImageUri}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setFullImageUri(null)}
+      >
+        <View style={styles.fullImageOverlay}>
+          <TouchableOpacity style={styles.fullImageClose} onPress={() => setFullImageUri(null)}>
+            <Ionicons name="close" size={32} color="#ffffff" />
+          </TouchableOpacity>
+          <Image
+            source={{ uri: fullImageUri }}
+            style={styles.fullImage}
+            resizeMode="contain"
+          />
+        </View>
+      </Modal>
 
       {/* مودال عرض مصادر البحث المتقدمة */}
       <Modal
@@ -1754,6 +2020,103 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     textAlign: 'right',
   },
+  // صندوق التفكير
+  thinkingContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    marginBottom: 8,
+    maxWidth: '92%',
+    alignSelf: 'flex-end',
+    borderWidth: 0.5,
+    borderColor: '#333',
+    overflow: 'hidden',
+  },
+  thinkingHeader: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#111',
+  },
+  thinkingHeaderText: {
+    color: '#aaa',
+    fontSize: 13,
+    fontWeight: '600',
+    marginHorizontal: 8,
+    flex: 1,
+    textAlign: 'right',
+  },
+  thinkingBody: {
+    padding: 12,
+  },
+  thinkingText: {
+    color: '#aaa',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'right',
+  },
+  // مرفقات المستخدم فوق الفقاعة
+  userAttachmentsContainer: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    marginBottom: 8,
+    maxWidth: '92%',
+  },
+  userImageAttachment: {
+    marginLeft: 8,
+    marginBottom: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+    width: 60,
+    height: 60,
+  },
+  userImageThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  userFileAttachment: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 8,
+    marginBottom: 8,
+    borderWidth: 0.5,
+    borderColor: '#333333',
+  },
+  userFileName: {
+    color: '#ffffff',
+    fontSize: 13,
+    marginRight: 6,
+    maxWidth: 100,
+  },
+  // معاينة مصغرة في شريط المرفقات أعلى الإدخال
+  previewThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  // زر الرجوع للأسفل
+  scrollToBottomButton: {
+    position: 'absolute',
+    bottom: 150,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+  },
   // أنماط ماركداون المخصصة
   blockquote: {
     backgroundColor: '#111111',
@@ -1917,15 +2280,19 @@ const styles = StyleSheet.create({
   attachAddButton: {
     padding: 6,
   },
+  // الحاوية الرئيسية للإدخال (موسعة لتشمل سطرين)
   inputContainer: {
-    flexDirection: 'row-reverse',
-    alignItems: 'flex-end',
     backgroundColor: '#111111',
     borderRadius: 26,
-    paddingHorizontal: 14,
-    paddingVertical: 4,
     borderWidth: 0.5,
     borderColor: '#222222',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  // صف الإدخال العلوي (نص + زر إرسال)
+  inputRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-end',
   },
   input: {
     flex: 1,
@@ -1939,10 +2306,7 @@ const styles = StyleSheet.create({
   inputActions: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
-  },
-  attachButton: {
-    padding: 8,
-    marginRight: 6,
+    marginBottom: 2,
   },
   sendButton: {
     width: 32,
@@ -1954,6 +2318,40 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#222222',
+  },
+  // صف الأزرار السفلية (أوضاع + مرفقات)
+  controlsRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 0.5,
+    borderTopColor: '#222222',
+  },
+  controlButton: {
+    padding: 8,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // مودال عرض الصورة كاملة
+  fullImageOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullImageClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 1,
+  },
+  fullImage: {
+    width: '90%',
+    height: '80%',
+    borderRadius: 12,
   },
   overlay: {
     position: 'absolute',
