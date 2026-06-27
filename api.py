@@ -341,6 +341,7 @@ class DeepSeekAPI:
             
         Returns:
             AsyncGenerator[Dict[str, Any], None]: Yields message chunks with content and type
+                Types: 'thinking', 'response', 'search', 'message_ids', 'text', and finish_reason='stop'
         """
         
         if not prompt or not isinstance(prompt, str):
@@ -367,6 +368,10 @@ class DeepSeekAPI:
         pow_response = await self.pow_solver.solve_challenge(challenge)
 
         headers = self._get_headers(pow_response)
+
+        # State for tracking current fragment type during streaming
+        current_fragment_type: Optional[str] = None
+        search_handled = False
 
         # Use async with for stream
         async with self.session.stream(
@@ -404,16 +409,127 @@ class DeepSeekAPI:
                     if not line:
                         continue
                     
-                    parsed = self._parse_chunk_sync(line)
-                    if parsed:
-                        if parsed.get('type') == 'message_ids':
-                            self.last_message_id[chat_session_id] = parsed['response_message_id']
+                    # Extract data payload
+                    if line.startswith('data: '):
+                        data_str = line[6:]
+                    elif line.startswith('data:'):
+                        data_str = line[5:]
+                    else:
+                        continue  # skip non-data lines
+                    
+                    if not data_str.strip():
+                        continue
+                    
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    
+                    # --- Handle message IDs (first message) ---
+                    if 'request_message_id' in data and 'response_message_id' in data:
+                        self.last_message_id[chat_session_id] = data['response_message_id']
+                        # Optionally yield a message_ids event, but keep it simple
+                        continue
+                    
+                    # --- Handle fragments inside v.response.fragments (initial fragment data) ---
+                    if 'v' in data and isinstance(data['v'], dict) and 'response' in data['v']:
+                        resp = data['v']['response']
+                        if 'fragments' in resp:
+                            for frag in resp['fragments']:
+                                frag_type = frag.get('type', '')
+                                content = frag.get('content', '')
+                                
+                                # Handle SEARCH fragment
+                                if frag_type == 'SEARCH' and not search_handled:
+                                    search_handled = True
+                                    yield {
+                                        'type': 'search',
+                                        'content': '',
+                                        'finish_reason': None,
+                                        'search_results': frag.get('results', [])
+                                    }
+                                # Handle THINK fragment: set current type, send content if any
+                                elif frag_type == 'THINK':
+                                    current_fragment_type = 'thinking'
+                                    if content:
+                                        yield {
+                                            'type': 'thinking',
+                                            'content': str(content),
+                                            'finish_reason': None
+                                        }
+                                # Handle RESPONSE fragment: set current type, send content if any
+                                elif frag_type == 'RESPONSE':
+                                    current_fragment_type = 'response'
+                                    if content:
+                                        yield {
+                                            'type': 'response',
+                                            'content': str(content),
+                                            'finish_reason': None
+                                        }
+                            continue  # Done with this line, move to next
+                    
+                    # --- Handle APPEND operations ---
+                    if 'p' in data and 'o' in data and data['o'] == 'APPEND':
+                        p = data['p']
+                        v = data.get('v', '')
+                        
+                        # Append to the last fragment's content
+                        if p == 'response/fragments/-1/content':
+                            if v and current_fragment_type:
+                                yield {
+                                    'type': current_fragment_type,
+                                    'content': str(v),
+                                    'finish_reason': None
+                                }
+                            continue  # important: move to next line
+                        
+                        # Append a new fragment (e.g., switching from THINK to RESPONSE)
+                        elif p == 'response/fragments':
+                            if isinstance(v, list):
+                                for frag in v:
+                                    frag_type = frag.get('type', '')
+                                    content = frag.get('content', '')
+                                    
+                                    if frag_type == 'THINK':
+                                        current_fragment_type = 'thinking'
+                                        if content:
+                                            yield {
+                                                'type': 'thinking',
+                                                'content': str(content),
+                                                'finish_reason': None
+                                            }
+                                    elif frag_type == 'RESPONSE':
+                                        current_fragment_type = 'response'
+                                        if content:
+                                            yield {
+                                                'type': 'response',
+                                                'content': str(content),
+                                                'finish_reason': None
+                                            }
                             continue
-
-                        yield parsed
-
-                        if parsed.get('finish_reason') == 'stop':
-                            break
+                        
+                        # Other APPEND types (like elapsed_secs) are ignored
+                        continue
+                    
+                    # --- Handle plain text chunks (backward compatibility) ---
+                    if 'v' in data and 'p' not in data:
+                        v = data.get('v')
+                        if isinstance(v, str):
+                            yield {
+                                'type': 'text',
+                                'content': v,
+                                'finish_reason': None
+                            }
+                        continue
+                    
+                    # --- Handle finished status ---
+                    if data.get('p') == 'response/status' and data.get('v') == 'FINISHED':
+                        yield {
+                            'type': 'text',
+                            'content': '',
+                            'finish_reason': 'stop'
+                        }
+                        break
 
     async def get_history(self, convo_id: str) -> Dict[str, Any]:
         """Fetch full conversation history"""
@@ -438,115 +554,6 @@ class DeepSeekAPI:
                 }
 
             return json.loads(await response.atext())
-
-    def _parse_chunk_sync(self, chunk: str) -> Optional[Dict[str, Any]]:
-        """Parse a SSE chunk from the API response (synchronous version)"""
-        if not chunk:
-            return None
-
-        try:
-            # Handle data: lines
-            if chunk.startswith('data: '):
-                data_str = chunk[6:]
-            elif chunk.startswith('data:'):
-                data_str = chunk[5:]
-            else:
-                # Skip non-data lines (like event: lines)
-                return None
-            
-            # Skip empty data
-            if not data_str or not data_str.strip():
-                return None
-            
-            # Parse JSON
-            data = json.loads(data_str)
-            
-            # Handle message IDs (first message) - check this BEFORE processing fragments
-            if 'request_message_id' in data and 'response_message_id' in data:
-                return {
-                    'type': 'message_ids',
-                    'response_message_id': data['response_message_id'],
-                    'finish_reason': None,
-                    'content': ''
-                }
-            
-            # Handle fragments in v.response.fragments
-            if 'v' in data and isinstance(data['v'], dict) and 'response' in data['v']:
-                response_data = data['v']['response']
-                if 'fragments' in response_data and isinstance(response_data['fragments'], list):
-                    for frag in response_data['fragments']:
-                        frag_type = frag.get('type', '')
-                        
-                        if frag_type == 'SEARCH':
-                            # Return search results as a special type
-                            return {
-                                'type': 'search',
-                                'content': '',
-                                'finish_reason': None,
-                                'search_results': frag.get('results', [])
-                            }
-                        elif frag_type == 'THINK':
-                            # Return thinking content separately
-                            thinking_content = frag.get('content', '')
-                            if thinking_content:
-                                return {
-                                    'type': 'thinking',
-                                    'content': str(thinking_content),
-                                    'finish_reason': None
-                                }
-                        elif frag_type == 'RESPONSE':
-                            # Return response content separately
-                            response_content = frag.get('content', '')
-                            if response_content:
-                                return {
-                                    'type': 'response',
-                                    'content': str(response_content),
-                                    'finish_reason': None
-                                }
-                    
-                    # If no fragments processed, return None for this chunk
-                    return None
-            
-            # Handle chunks with just 'v' field (simplified format)
-            if 'v' in data and 'p' not in data:
-                v_value = data.get('v', '')
-                # Ensure v_value is a string
-                if isinstance(v_value, dict):
-                    # If it's a dict, convert to string or skip
-                    return None
-                return {
-                    'type': 'text',
-                    'content': str(v_value),  # Force to string
-                    'finish_reason': None
-                }
-            
-            # Handle full DeepSeek format with 'p' and 'v' fields
-            if 'v' in data and data.get('p') in {'response/content', 'response/fragments/-1/content'} and data.get('o') == 'APPEND':
-                v_value = data.get('v', '')
-                if isinstance(v_value, dict):
-                    return None
-                return {
-                    'type': 'text',
-                    'content': str(v_value),  # Force to string
-                    'finish_reason': None
-                }
-            
-            # Handle finished status
-            if data.get('p') == 'response/status' and data.get('v') == 'FINISHED':
-                return {
-                    'type': 'text',
-                    'content': '',
-                    'finish_reason': 'stop'
-                }
-            
-            # Skip other message types
-            return None
-            
-        except json.JSONDecodeError:
-            return None
-        except Exception as e:
-            print(f"Warning: Error parsing chunk: {e}", file=sys.stderr)
-            return None
 
     async def close(self):
         """Close the async session"""
